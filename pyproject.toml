@@ -1,0 +1,21 @@
+[project]
+name = "nanohermes"
+version = "1.0.0"
+description = "دستیار ترمینالی سبک با دسترسی سرور، وب‌سرچ و مهارت‌های خودرشد"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "aiohttp>=3.9",
+    "pyyaml>=6.0",
+    "prompt_toolkit>=3.0",
+    "rich>=13.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["skills", "webtools"]
+scripts = { nano = "nanohermes_cli:main" }

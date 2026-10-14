@@ -1,0 +1,969 @@
+#!/opt/nanohermes/.venv/bin/python
+# -*- coding: utf-8 -*-
+"""
+Nano-Hermes CLI — دستیار ترمینالی سبک
+
+دستورها:
+  /model          انتخاب پروایدر و مدل (منوی تعاملی)
+  /models         لیست کامل پروایدرها و مدل‌ها
+  /provider       افزودن/ویرایش پروایدر
+  /new            گفتگوی جدید
+  /reasoning      روشن/خاموش کردن استدلال عمیق
+  /stop           توقف اجرای جاری
+  /tools          فعال/غیرفعال کردن ابزارها
+  /status         وضعیت سرور و نشست
+  /sys <text>     تغییر شخصیت (system prompt)
+  /history        تاریخچهٔ گفتگوی جاری
+  /save /load     ذخیره/بارگذاری سشن
+  /help           راهنما
+  /exit           خروج
+"""
+import asyncio, json, os, re, signal, sqlite3, sys, time
+from pathlib import Path
+
+# ═══════════════════ تنظیمات ═══════════════════
+BASE      = Path(__file__).resolve().parent
+DB_PATH   = BASE / "nano_hermes.db"
+CACHE     = BASE / ".cache"
+CACHE.mkdir(exist_ok=True)
+SESS_FILE = CACHE / "session.json"
+CFG_FILE  = CACHE / "cli.json"
+
+# ── config.json (ساختهٔ install.sh) — اختیاری ──
+_CFG_JSON = BASE / "config.json"
+CFG_DATA = {}
+if _CFG_JSON.exists():
+    try:
+        CFG_DATA = json.loads(_CFG_JSON.read_text())
+    except Exception:
+        CFG_DATA = {}
+
+if CFG_DATA.get("skills_dir"):
+    os.environ.setdefault("NANO_SKILLS", CFG_DATA["skills_dir"])
+
+# کلیدهای پروایدر از این مسیر خوانده می‌شوند (اگر بود)
+HERMES_ENV_FILE = Path(CFG_DATA.get("hermes_env") or
+                       os.environ.get("HERMES_ENV") or
+                       (Path.home() / ".hermes" / ".env"))
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.markdown import Markdown
+from rich.table import Table
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.text import Text
+from rich.syntax import Syntax
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.styles import Style
+from prompt_toolkit.formatted_text import HTML as PtHTML
+from prompt_toolkit.patch_stdout import patch_stdout
+
+from rich.theme import Theme
+
+# 🎨 تم رنگی "nano" — سایت‌تریل + طلایی، آرام و خوانا
+NANO_THEME = Theme({
+    "brand":    "bold #7dd3fc",      # آبی روشن
+    "brand2":   "bold #38bdf8",
+    "accent":   "#fbbf24",           # طلایی
+    "ok":       "bold #4ade80",
+    "err":      "bold #f87171",
+    "warn":     "bold #fbbf24",
+    "dim":      "#6b7280",
+    "user":     "bold #a78bfa",      # بنفش
+    "agent":    "#e5e7eb",
+    "tool":     "#22d3ee",           # فیروزه‌ای
+    "toolarg":  "#64748b",
+    "panel":    "#1e293b",
+    "hint":     "#475569",
+    "skill":    "#f472b6",           # صورتی
+})
+
+console = Console(theme=NANO_THEME, highlight=False)
+APP = "nano"
+
+import aiohttp
+from aiohttp import ClientSession
+
+# سیستم مهارت (خودرشد)
+import skills as SK
+
+# ═══════════════════ ابزارها ═══════════════════
+TOOLS = [
+    {"type": "function", "function": {
+        "name": "run_bash",
+        "description": "Execute a bash command on the Linux server and return stdout/stderr.",
+        "parameters": {"type": "object", "properties": {
+            "command": {"type": "string", "description": "دستور شل"}}, "required": ["command"]}}},
+    {"type": "function", "function": {
+        "name": "web_search",
+        "description": "وب‌سرچ (DuckDuckGo).",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string"}, "max_results": {"type": "integer", "default": 5}},
+            "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "read_url",
+        "description": "خواندن متن تمیز یک صفحهٔ وب (Jina Reader).",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string"}}, "required": ["url"]}}},
+    {"type": "function", "function": {
+        "name": "skill_list",
+        "description": "فهرست مهارت‌های آموخته‌شده (نام، توضیح، تعداد استفاده، آمار).",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "skill_view",
+        "description": "خواندن کامل یک مهارت (روش کار و آموخته‌های قبلی). قبل از کارهای تکراری این را صدا بزن.",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "نام مهارت"},
+            "file_path": {"type": "string", "description": "اختیاری: مسیر فایل پیوست مثل references/api.md"}},
+            "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "skill_manage",
+        "description": "ساخت یا به‌روزرسانی مهارت (یادگیری از تجربه). وقتی راه‌حل مفیدی پیدا کردی، اینجا ذخیره کن تا دفعهٔ بعد استفاده شود.",
+        "parameters": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["create", "update", "append", "delete", "add_file"],
+                       "description": "create=جدید، update=بازنویسی بدنه، append=افزودن بخش، add_file=افزودن فایل پیوست"},
+            "name": {"type": "string", "description": "نام مهارت (حروف کوچک و خط تیره)"},
+            "description": {"type": "string", "description": "یک‌خطی چه‌کار می‌کند (فقط برای create)"},
+            "keywords": {"type": "string", "description": "کلیدواژه‌ها با کاما (برای pidfa شدن خودکار)"},
+            "body": {"type": "string", "description": "محتوای markdown مهارت (مراحل، دستورها، نکات)"},
+            "append": {"type": "string", "description": "متنی که به انتهای مهارت اضافه شود"},
+            "file_path": {"type": "string", "description": "برای add_file: references/x.md"},
+            "content": {"type": "string", "description": "محتوای فایل پیوست"}},
+            "required": ["action", "name"]}}},
+    {"type": "function", "function": {
+        "name": "manage_file",
+        "description": "خواندن یا نوشتن فایل روی سرور.",
+        "parameters": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["read", "write"]},
+            "path": {"type": "string"}, "content": {"type": "string"}},
+            "required": ["action", "path"]}}},
+]
+
+DANGER = re.compile(
+    r"(rm\s+-rf\s+/[^t]|rm\s+-rf\s+/\s|mkfs|dd\s+if=|:\(\)\{|shutdown|reboot|poweroff|"
+    r"init\s+0|>\s*/dev/sd|chmod\s+-R\s+777\s+/|iptables\s+-F|ufw\s+disable)", re.I)
+
+MAX_OUTPUT = 8000
+CMD_TIMEOUT = 60
+MAX_STEPS = 14
+
+DEFAULT_SYS = """تو Nano-Hermes هستی — یک ایجنت خودمختار با دسترسی کامل (root) به یک سرور لینوکس و دسترسی زنده به وب.
+
+ابزارها: run_bash (اجرای دستور شل)، web_search، read_url (خواندن وب)، manage_file (فایل)،
+و ابزارهای مهارت: skill_list / skill_view / skill_manage.
+
+قواعد:
+- فارسی و مستقیم. اول نتیجه، بعد توضیح کوتاه.
+- قبل از کار چندمرحله‌ای یک‌خط بگو چیکار می‌کنی.
+- هرگز کلید/توکن را چاپ نکن.
+- 📚 ذهن خودرشد: قبل از کارهای تکراری، skill_list بزن و مهارت مرتبط را بخوان (skill_view).
+- بعد از حل موفق یک مسئلهٔ سخت یا کشف ترفند، فوراً با skill_manage آن را ذخیره یا به‌روز کن.
+"""
+
+
+def load_cfg():
+    try:
+        return json.loads(CFG_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def save_cfg(c):
+    CFG_FILE.write_text(json.dumps(c, ensure_ascii=False, indent=1))
+
+
+def db():
+    c = sqlite3.connect(DB_PATH)
+    c.row_factory = sqlite3.Row
+    return c
+
+
+def init_db():
+    """ساخت جدول‌ها (برای نصب تازه)."""
+    c = db()
+    c.execute("""CREATE TABLE IF NOT EXISTS providers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE, base_url TEXT, key_env TEXT, api_key TEXT,
+        models TEXT, source TEXT, created REAL)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS chats (
+        id TEXT PRIMARY KEY, title TEXT, created REAL, updated REAL)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT, role TEXT,
+        content TEXT, steps TEXT, ts REAL)""")
+    c.commit(); c.close()
+
+
+def sync_hermes_providers():
+    """خواندن پروایدرهای Hermes از config.yaml (بدون کلید — کلید از .env)."""
+    cfgp = Path(CFG_DATA.get("hermes_config") or
+                os.environ.get("HERMES_CONFIG") or (Path.home() / ".hermes" / "config.yaml"))
+    if not cfgp.exists():
+        return 0
+    try:
+        import yaml
+        cfg = yaml.safe_load(cfgp.read_text()) or {}
+    except Exception:
+        return 0
+    provs = cfg.get("providers") or {}
+    if not isinstance(provs, dict):
+        return 0
+    n = 0
+    c = db()
+    for name, p in provs.items():
+        if not isinstance(p, dict):
+            continue
+        url = p.get("base_url") or ""
+        if not url:
+            continue
+        models = p.get("models") or []
+        models = [m if isinstance(m, str) else (m.get("id") or "") for m in models]
+        models = [m for m in models if m]
+        if not models:
+            continue
+        c.execute("""INSERT INTO providers(name,base_url,key_env,api_key,models,source,created)
+                     VALUES(?,?,?,?,?,?,?)
+                     ON CONFLICT(name) DO UPDATE SET base_url=excluded.base_url,
+                       key_env=excluded.key_env, models=excluded.models
+                     WHERE providers.source='hermes'""",
+                  (name, url, p.get("key_env") or "", "", json.dumps(models, ensure_ascii=False),
+                   "hermes", time.time()))
+        n += 1
+    c.commit(); c.close()
+    return n
+
+
+def ensure_ready():
+    """آماده‌سازی: جدول + sync پروایدرها."""
+    init_db()
+    try:
+        c = db()
+        cnt = c.execute("SELECT COUNT(*) FROM providers WHERE source='hermes'").fetchone()[0]
+        c.close()
+        if cnt == 0:
+            sync_hermes_providers()
+    except Exception:
+        pass
+
+
+def get_providers():
+    c = db()
+    rows = [dict(r) for r in c.execute("SELECT * FROM providers ORDER BY name")]
+    c.close()
+    for r in rows:
+        try:
+            r["models"] = json.loads(r.get("models") or "[]")
+        except Exception:
+            r["models"] = []
+    return rows
+
+
+def get_key(prov):
+    if prov.get("api_key"):
+        return prov["api_key"]
+    ke = prov.get("key_env")
+    if ke:
+        if ke in os.environ:
+            return os.environ[ke]
+        try:
+            for line in HERMES_ENV_FILE.read_text().splitlines():
+                if line.startswith(ke + "="):
+                    return line.split("=", 1)[1].strip()
+        except Exception:
+            pass
+    return ""
+
+
+# ═══════════════════ اجرای ابزارها ═══════════════════
+async def tool_run_bash(command="", **kw):
+    if DANGER.search(command):
+        return "⛔ دستور پرخطر — اجرا نشد."
+    try:
+        p = await asyncio.create_subprocess_shell(
+            command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            out, _ = await asyncio.wait_for(p.communicate(), timeout=CMD_TIMEOUT)
+        except asyncio.TimeoutError:
+            p.kill()
+            return f"⏱ تایم‌اوت {CMD_TIMEOUT}s"
+        t = out.decode("utf-8", "replace")
+        return (t[:MAX_OUTPUT] + f"\n… [{len(t)} بایت]") if len(t) > MAX_OUTPUT else (t or "(بدون خروجی)")
+    except Exception as e:
+        return f"خطا: {e}"
+
+
+async def tool_web_search(query="", max_results=5, **kw):
+    import webtools
+    return await webtools.web_search(query, max_results)
+
+
+async def tool_read_url(url="", **kw):
+    import webtools
+    return await webtools.read_url(url)
+
+
+async def tool_manage_file(action="read", path="", content="", **kw):
+    p = Path(path).expanduser()
+    try:
+        if action == "read":
+            return p.read_text(errors="replace")[:MAX_OUTPUT] if p.exists() else "فایل نیست."
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content or "")
+        return f"✅ نوشته شد: {p}"
+    except Exception as e:
+        return f"خطای فایل: {e}"
+
+
+async def tool_skill_list(**kw):
+    import skills as SK
+    s = SK.stats()
+    if not s["skills"]:
+        return "هنوز مهارتی یاد نگرفته‌ام."
+    lines = [f"📚 {s['total']} مهارت · {s['uses_total']} بار استفاده:"]
+    for x in s["skills"]:
+        lines.append(f"• {x['name']} ({x['uses']}×) — {x['description']}")
+    return "\n".join(lines)
+
+
+async def tool_skill_view(name="", file_path=None, **kw):
+    import skills as SK
+    r = SK.read_skill(name, file_path)
+    if r.get("error"):
+        return r["error"]
+    return f"# {name}\n{r['content'][:6000]}"
+
+
+async def tool_skill_manage(action="", name="", description="", keywords="",
+                            body="", append="", file_path="", content="", **kw):
+    import skills as SK
+    kws = [x.strip() for x in (keywords or "").split(",") if x.strip()]
+    if action == "create":
+        return str(SK.create_skill(name, description, body, kws))
+    if action == "update":
+        return str(SK.update_skill(name, body=body or None,
+                                   description=description or None,
+                                   keywords=kws or None))
+    if action == "append":
+        return str(SK.update_skill(name, append=append or body))
+    if action == "delete":
+        return str(SK.delete_skill(name))
+    if action == "add_file":
+        return str(SK.add_file(name, file_path, content))
+    return f"اکشن نامعتبر: {action}"
+
+
+TOOL_FN = {"run_bash": tool_run_bash, "web_search": tool_web_search,
+           "read_url": tool_read_url, "manage_file": tool_manage_file,
+           "skill_list": tool_skill_list, "skill_view": tool_skill_view,
+           "skill_manage": tool_skill_manage}
+TOOL_ICON = {"run_bash": "▶", "web_search": "🔍", "read_url": "🌐",
+             "manage_file": "📄", "skill_list": "📚", "skill_view": "📖",
+             "skill_manage": "💾"}
+
+
+# ═══════════════════ نشست ═══════════════════
+class Session:
+    def __init__(self, prov, model, system=None):
+        self.prov = prov
+        self.model = model
+        self.system = system or DEFAULT_SYS
+        self.messages = []
+        self.reasoning = False
+        self.tools_on = True
+        self.stop_flag = False
+
+    def to_dict(self):
+        return {"prov": self.prov, "model": self.model, "system": self.system,
+                "messages": self.messages, "reasoning": self.reasoning,
+                "tools_on": self.tools_on}
+
+    @classmethod
+    def from_dict(cls, d):
+        s = cls(d.get("prov", ""), d.get("model", ""), d.get("system"))
+        s.messages = d.get("messages", [])
+        s.reasoning = d.get("reasoning", False)
+        s.tools_on = d.get("tools_on", True)
+        return s
+
+
+# ═══════════════════ LLM ═══════════════════
+async def llm(prov, model, messages, tools=True, temperature=0.4, reasoning=False):
+    key = get_key(prov)
+    if not key:
+        return {"error": f"کلید «{prov['name']}» پیدا نشد."}
+    url = prov["base_url"].rstrip("/") + "/chat/completions"
+    body = {"model": model, "messages": messages, "temperature": temperature, "stream": False}
+    if tools:
+        body["tools"] = TOOLS
+        body["tool_choice"] = "auto"
+    if reasoning:
+        # پروایدرهای سازگار OpenAI — پارامترهای رایج
+        body["reasoning_effort"] = "high"
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    try:
+        async with ClientSession() as s:
+            async with s.post(url, json=body, headers=headers, timeout=180) as r:
+                data = await r.json(content_type=None)
+        if not isinstance(data, dict):
+            return {"error": "پاسخ نامعتبر"}
+        if data.get("error"):
+            e = data["error"]
+            return {"error": e if isinstance(e, str) else (e.get("message") or str(e))}
+        ch = (data.get("choices") or [{}])[0]
+        return {"message": ch.get("message") or {}, "usage": data.get("usage")}
+    except Exception as e:
+        return {"error": f"خطای پروایدر: {e}"}
+
+
+# ═══════════════════ حلقهٔ ایجنت ═══════════════════
+async def run_agent(sess, user_text):
+    provs = {p["name"]: p for p in get_providers()}
+    prov = provs.get(sess.prov)
+    if not prov:
+        return {"error": f"پروایدر «{sess.prov}» نیست."}
+
+    system = sess.system
+    if sess.tools_on:
+        try:
+            import skills as SK
+            ctx = SK.build_context(user_text, max_chars=2500, top=2)
+            if ctx:
+                system += "\n\n" + ctx
+        except Exception:
+            pass
+    if not sess.tools_on:
+        system += "\n\n⚠️ ابزارها خاموش‌اند. فقط با دانش خودت پاسخ بده و tool call تولید نکن."
+    msgs = [{"role": "system", "content": system}] + sess.messages \
+        + [{"role": "user", "content": user_text}]
+    steps = []
+
+    for _ in range(MAX_STEPS):
+        if sess.stop_flag:
+            sess.stop_flag = False
+            return {"reply": "⏹ متوقف شد.", "steps": steps}
+
+        res = await llm(prov, sess.model, msgs, tools=sess.tools_on, reasoning=sess.reasoning)
+        if "error" in res:
+            return {"error": res["error"], "steps": steps}
+
+        msg = res["message"] or {}
+        tcs = msg.get("tool_calls") or []
+        content = msg.get("content") or ""
+
+        if not tcs:
+            return {"reply": content or "(بدون پاسخ)", "steps": steps, "usage": res.get("usage")}
+
+        msgs.append({"role": "assistant", "content": content, "tool_calls": tcs})
+        for tc in tcs:
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except Exception:
+                args = {}
+
+            icon = TOOL_ICON.get(name, "🔧")
+            arg_txt = json.dumps(args, ensure_ascii=False)
+            if len(arg_txt) > 90:
+                arg_txt = arg_txt[:87] + "…"
+            console.print(f"  [dim]{icon} {name}[/dim] [dim italic]{arg_txt}[/dim italic]")
+
+            t0 = time.time()
+            out = await TOOL_FN.get(name, lambda **k: f"ابزار ناشناخته: {name}")(**args) \
+                if name in TOOL_FN else f"ابزار ناشناخته: {name}"
+            ms = int((time.time() - t0) * 1000)
+            ok = not str(out).startswith(("خطا", "⛔", "⏱", "خطای"))
+
+            first = str(out).strip().splitlines()[0][:100] if str(out).strip() else ""
+            console.print(f"    [{'green' if ok else 'red'}]{'✓' if ok else '✗'}[/] [dim]{ms}ms · {first}[/dim]")
+
+            steps.append({"tool": name, "args": args, "out": str(out)[:1200],
+                          "ms": ms, "ok": ok})
+            msgs.append({"role": "tool", "tool_call_id": tc.get("id"),
+                         "name": name, "content": str(out)})
+
+    return {"reply": "⚠️ به سقف مراحل رسیدم.", "steps": steps}
+
+
+async def run_agent_stream(sess, user_text):
+    """نسخهٔ با نمایش زندهٔ مراحل."""
+    provs = {p["name"]: p for p in get_providers()}
+    prov = provs.get(sess.prov)
+    if not prov:
+        return {"error": f"پروایدر «{sess.prov}» نیست."}
+
+    system = sess.system
+    if not sess.tools_on:
+        system += "\n\n⚠️ در این نشست ابزارها خاموش‌اند. هیچ ابزاری نداری و نباید دستور یا «tool call» تولید کنی؛ فقط با دانش خودت پاسخ بده."
+    else:
+        system += "\n\nبرای هر کار واقعی، ابزار را دقیقاً از طریق tool call صدا بزن — هرگز متن JSON یا نام ابزار را در پاسخ ننویس."
+
+    msgs = [{"role": "system", "content": system}] + sess.messages \
+        + [{"role": "user", "content": user_text}]
+    steps = []
+
+    with Live(Spinner("dots12", text=Text(" در حال فکر کردن…", style="#64748b")),
+              console=console, refresh_per_second=10, transient=True):
+        for _ in range(MAX_STEPS):
+            if sess.stop_flag:
+                sess.stop_flag = False
+                return {"reply": "⏹ متوقف شد.", "steps": steps}
+            res = await llm(prov, sess.model, msgs, tools=sess.tools_on,
+                            reasoning=sess.reasoning)
+            if "error" in res:
+                return {"error": res["error"], "steps": steps}
+            msg = res["message"] or {}
+            tcs = msg.get("tool_calls") or []
+            content = msg.get("content") or ""
+            if not tcs:
+                return {"reply": content or "(بدون پاسخ)", "steps": steps,
+                        "usage": res.get("usage")}
+            msgs.append({"role": "assistant", "content": content, "tool_calls": tcs})
+            for tc in tcs:
+                fn = tc.get("function") or {}
+                name = fn.get("name")
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except Exception:
+                    args = {}
+                icon = TOOL_ICON.get(name, "🔧")
+                a = json.dumps(args, ensure_ascii=False)
+                a = a[:78] + "…" if len(a) > 78 else a
+                console.print(f"  [#475569]┌[/#475569] [tool]{icon} {name}[/tool] "
+                              f"[toolarg]{_esc(a)}[/toolarg]")
+                t0 = time.time()
+                fnc = TOOL_FN.get(name)
+                out = await fnc(**args) if fnc else f"ابزار ناشناخته: {name}"
+                ms = int((time.time() - t0) * 1000)
+                ok = not str(out).startswith(("خطا", "⛔", "⏱", "خطای"))
+                first = str(out).strip().splitlines()[0][:78] if str(out).strip() else ""
+                mark = "[ok]✓[/ok]" if ok else "[err]✗[/err]"
+                console.print(f"  [#475569]└[/#475569] {mark} [dim]{ms}ms · {_esc(first)}[/dim]")
+                steps.append({"tool": name, "args": args, "out": str(out)[:1200],
+                              "ms": ms, "ok": ok})
+                msgs.append({"role": "tool", "tool_call_id": tc.get("id"),
+                             "name": name, "content": str(out)})
+    return {"reply": "⚠️ سقف مراحل.", "steps": steps}
+
+
+# ═══════════════════ UI ═══════════════════
+def _esc(t):
+    """فرار دادن [ ] تا rich آن را تگ نگیرد."""
+    return str(t).replace("[", "\\[").replace("]", "\\]")
+
+
+def banner(sess):
+    console.clear()
+    console.print()
+    sk = len(SK.list_skills())
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="dim", justify="right")
+    grid.add_column(style="white")
+    grid.add_row("مدل", f"[brand]{sess.prov}[/brand][dim]/[/dim][accent]{sess.model}[/accent]")
+    grid.add_row("ابزارها", f"[ok]● روشن[/ok]" if sess.tools_on else "[err]● خاموش[/err]")
+    grid.add_row("استدلال", f"[ok]● عمیق[/ok]" if sess.reasoning else "[dim]○ عادی[/dim]")
+    grid.add_row("مهارت‌ها", f"[skill]{sk}[/skill]" + (" [dim]آموخته‌شده[/dim]" if sk else ""))
+
+    console.print(Panel(
+        grid,
+        title="[brand]⚡ Nano-Hermes[/brand]",
+        subtitle="[hint]دستیار سرور · وب · فایل · خودرشد[/hint]",
+        border_style="#334155",
+        padding=(1, 3),
+        expand=False))
+    console.print("  [hint]/help[/hint] [dim]راهنما ·[/dim] [hint]/model[/hint] [dim]مدل ·[/dim] "
+                  "[hint]/skills[/hint] [dim]مهارت‌ها ·[/dim] [hint]Ctrl+C[/hint] [dim]توقف[/dim]\n")
+
+
+def cmd_help():
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_column(style="cyan", no_wrap=True)
+    t.add_column(style="dim")
+    for k, v in [
+        ("/model [name]", "تغییر مدل (بدون آرگومان = منوی تعاملی)"),
+        ("/models", "لیست پروایدرها و مدل‌ها"),
+        ("/provider", "افزودن یا ویرایش پروایدر"),
+        ("/new", "گفتگوی جدید (پاک کردن تاریخچه)"),
+        ("/reasoning", "روشن/خاموش استدلال عمیق"),
+        ("/tools", "روشن/خاموش ابزارها"),
+        ("/stop", "توقف اجرای جاری"),
+        ("/skills", "مهارت‌های آموخته‌شده (خودرشد)"),
+        ("/skill <نام>", "نمایش کامل یک مهارت"),
+        ("/learn <نام>", "ذخیرهٔ آخرین راه‌حل به‌عنوان مهارت"),
+        ("/forget <نام>", "حذف یک مهارت"),
+        ("/status", "وضعیت سرور و نشست"),
+        ("/sys <متن>", "تغییر شخصیت ایجنت"),
+        ("/history", "تاریخچهٔ گفتگوی جاری"),
+        ("/save [نام]", "ذخیرهٔ نشست"),
+        ("/load [نام]", "بارگذاری نشست"),
+        ("/clear", "پاک کردن صفحه"),
+        ("/exit", "خروج"),
+    ]:
+        t.add_row(k, v)
+    console.print(Panel(t, title="[bold]راهنما[/bold]", border_style="cyan"))
+
+
+async def pick_model(sess):
+    provs = get_providers()
+    if not provs:
+        console.print("[red]پروایدری نیست. ابتدا /provider[/red]")
+        return
+    t = Table(title="پروایدرها", box=None, padding=(0, 2))
+    t.add_column("#", style="cyan", width=3)
+    t.add_column("نام", style="bold")
+    t.add_column("مدل‌ها", justify="right", style="dim")
+    t.add_column("کلید", justify="center")
+    for i, p in enumerate(provs, 1):
+        t.add_row(str(i), p["name"], str(len(p["models"])),
+                  "[green]✓[/green]" if get_key(p) else "[red]✗[/red]")
+    console.print(t)
+
+    try:
+        sel = console.input("[cyan]شمارهٔ پروایدر (Enter=لغو):[/cyan] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not sel.isdigit() or not (1 <= int(sel) <= len(provs)):
+        return
+    p = provs[int(sel) - 1]
+
+    t2 = Table(title=f"مدل‌های {p['name']}", box=None, padding=(0, 2))
+    t2.add_column("#", style="cyan", width=3)
+    t2.add_column("مدل")
+    for i, m in enumerate(p["models"], 1):
+        t2.add_row(str(i), m)
+    console.print(t2)
+
+    try:
+        ms = console.input("[cyan]شمارهٔ مدل (Enter=لغو):[/cyan] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not ms.isdigit() or not (1 <= int(ms) <= len(p["models"])):
+        return
+
+    sess.prov = p["name"]
+    sess.model = p["models"][int(ms) - 1]
+    console.print(f"[green]✓[/green] مدل → [cyan]{sess.prov}/{sess.model}[/cyan]")
+
+
+def cmd_models():
+    provs = get_providers()
+    if not provs:
+        console.print("[red]پروایدری نیست.[/red]")
+        return
+    for p in provs:
+        has = "[green]✓ کلید[/green]" if get_key(p) else "[red]✗ بدون کلید[/red]"
+        console.print(f"\n[bold cyan]{p['name']}[/bold cyan]  {has}\n[dim]{p['base_url']}[/dim]")
+        for m in p["models"][:12]:
+            console.print(f"   [dim]•[/dim] {m}")
+        if len(p["models"]) > 12:
+            console.print(f"   [dim]… و {len(p['models']) - 12} مدل دیگر[/dim]")
+
+
+async def cmd_status(sess):
+    import shutil
+    r = {}
+    try:
+        with open("/proc/loadavg") as f:
+            r["load"] = f.read().split()[:3]
+        with open("/proc/meminfo") as f:
+            mem = dict(l.split(":") for l in f.read().splitlines())
+        total = int(mem["MemTotal"].split()[0]); avail = int(mem["MemAvailable"].split()[0])
+        r["mem"] = f"{(total - avail) / 1048576:.1f}/{total / 1048576:.1f} GB"
+        du = shutil.disk_usage("/")
+        r["disk"] = f"{du.used / 2**30:.0f}/{du.total / 2**30:.0f} GB ({du.used * 100 // du.total}%)"
+    except Exception:
+        pass
+
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_column(style="cyan", no_wrap=True)
+    t.add_column()
+    t.add_row("مدل", f"{sess.prov}/{sess.model}")
+    t.add_row("پیام‌ها", str(len(sess.messages)))
+    t.add_row("ابزارها", "روشن" if sess.tools_on else "خاموش")
+    t.add_row("استدلال", "روشن" if sess.reasoning else "عادی")
+    t.add_row("Load", " ".join(r.get("load", ["?"])))
+    t.add_row("RAM", r.get("mem", "?"))
+    t.add_row("دیسک", r.get("disk", "?"))
+    t.add_row("uptime", f"{time.time() - boot_time():.0f}s" if False else uptime_str())
+    console.print(Panel(t, title="[bold]وضعیت[/bold]", border_style="cyan"))
+
+
+def uptime_str():
+    try:
+        with open("/proc/uptime") as f:
+            s = float(f.read().split()[0])
+        d, s = divmod(int(s), 86400)
+        h, s = divmod(s, 3600)
+        m, _ = divmod(s, 60)
+        return (f"{d} روز " if d else "") + f"{h}:{m:02d} ساعت"
+    except Exception:
+        return "?"
+
+
+def boot_time():
+    return 0
+
+
+def cmd_add_provider():
+    try:
+        name = console.input("[cyan]نام پروایدر:[/cyan] ").strip()
+        url = console.input("[cyan]Base URL:[/cyan] ").strip()
+        key = console.input("[cyan]API Key (خالی = از‌محیط):[/cyan] ").strip()
+        mods = console.input("[cyan]مدل‌ها (با کاما):[/cyan] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not name or not url:
+        console.print("[red]نام و آدرس لازم است.[/red]")
+        return
+    models = [m.strip() for m in mods.split(",") if m.strip()]
+    c = db()
+    c.execute("""INSERT INTO providers(name,base_url,key_env,api_key,models,source,created)
+                 VALUES(?,?,?,?,?,?,?)
+                 ON CONFLICT(name) DO UPDATE SET base_url=excluded.base_url,
+                 api_key=excluded.api_key, models=excluded.models""",
+              (name, url, "", key, json.dumps(models, ensure_ascii=False), "manual", time.time()))
+    c.commit(); c.close()
+    console.print(f"[green]✓[/green] پروایدر «{name}» ذخیره شد ({len(models)} مدل)")
+
+
+# ═══════════════════ MAIN ═══════════════════
+async def main():
+    ensure_ready()
+    cfg = load_cfg()
+    provs = get_providers()
+    if not provs:
+        console.print(Panel(
+            "[warn]هیچ پروایدری پیدا نشد.[/warn]\n\n"
+            "۱) اگر Hermes داری: مطمئن شو [brand]~/.hermes/config.yaml[/brand] پروایدر دارد.\n"
+            "۲) یا از داخل همین برنامه با [brand]/provider[/brand] یکی اضافه کن\n"
+            "   (نام، Base URL، API Key، مدل‌ها).",
+            title="[brand]راه‌اندازی[/brand]", border_style="#334155", padding=(1, 2)))
+        # اجازه بده کاربر پروایدر اضافه کند
+        try:
+            ans = console.input("  [brand]می‌خواهی همین حالا پروایدر اضافه کنی؟[/brand] [dim][y/N][/dim] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            ans = "n"
+        if ans.lower() in ("y", "yes", "بله", "ب"):
+            cmd_add_provider()
+            provs = get_providers()
+        if not provs:
+            sys.exit(1)
+
+    # انتخاب اولیه
+    default_prov = cfg.get("provider") or provs[0]["name"]
+    p = next((x for x in provs if x["name"] == default_prov), provs[0])
+    model = cfg.get("model") or (p["models"][0] if p["models"] else "")
+
+    sess = Session(p["name"], model)
+    if SESS_FILE.exists() and cfg.get("autoload"):
+        try:
+            sess = Session.from_dict(json.loads(SESS_FILE.read_text()))
+        except Exception:
+            pass
+
+    banner(sess)
+
+    style = Style.from_dict({
+        "prompt": "#38bdf8 bold",
+        "dim": "#475569",
+        "bottom-toolbar": "#334155 bg:#0f172a",
+        "completion-menu.completion": "bg:#1e293b #e5e7eb",
+        "completion-menu.completion.current": "bg:#334155 #7dd3fc bold",
+        "scrollbar.background": "bg:#1e293b",
+        "scrollbar.button": "bg:#334155",
+    })
+    ptk = PromptSession(
+        history=FileHistory(str(CACHE / "history.txt")),
+        style=style,
+        completer=WordCompleter(
+            ["/model", "/models", "/provider", "/new", "/reasoning", "/tools",
+             "/stop", "/status", "/sys", "/history", "/save", "/load", "/clear",
+             "/skills", "/skill", "/learn", "/forget",
+             "/help", "/exit"], ignore_case=True),
+    )
+
+    while True:
+        try:
+            with patch_stdout():
+                prompt_html = (f"<prompt>⚡ nano</prompt> <dim>❯</dim> ")
+                raw = await ptk.prompt_async(PtHTML(prompt_html))
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]خداحافظ 👋[/dim]")
+            break
+
+        text = raw.strip()
+        if not text:
+            continue
+
+        # ── دستورها ──
+        if text.startswith("/"):
+            parts = text.split(maxsplit=1)
+            cmd = parts[0].lower()
+            arg = parts[1] if len(parts) > 1 else ""
+
+            if cmd in ("/exit", "/quit", "/q"):
+                console.print("[dim]خداحافظ 👋[/dim]")
+                break
+            elif cmd == "/help":
+                cmd_help()
+            elif cmd == "/model":
+                if arg:
+                    if "/" in arg:
+                        pn, mn = arg.split("/", 1)
+                        sess.prov, sess.model = pn, mn
+                        console.print(f"[green]✓[/green] مدل → [cyan]{pn}/{mn}[/cyan]")
+                    else:
+                        sess.model = arg
+                        console.print(f"[green]✓[/green] مدل → [cyan]{arg}[/cyan]")
+                else:
+                    await pick_model(sess)
+            elif cmd == "/models":
+                cmd_models()
+            elif cmd == "/provider":
+                cmd_add_provider()
+            elif cmd == "/new":
+                sess.messages = []
+                console.print("[green]✓[/green] گفتگوی جدید")
+            elif cmd == "/reasoning":
+                sess.reasoning = not sess.reasoning
+                console.print(f"[green]✓[/green] استدلال: "
+                              f"{'[green]روشن[/green]' if sess.reasoning else '[dim]عادی[/dim]'}")
+            elif cmd == "/tools":
+                sess.tools_on = not sess.tools_on
+                console.print(f"[green]✓[/green] ابزارها: "
+                              f"{'[green]روشن[/green]' if sess.tools_on else '[red]خاموش[/red]'}")
+            elif cmd == "/stop":
+                sess.stop_flag = True
+                console.print("[yellow]⏹ درخواست توقف ثبت شد[/yellow]")
+            elif cmd == "/skills":
+                rows = SK.list_skills()
+                if not rows:
+                    console.print("[dim]هنوز مهارتی نیست. بعد از حل یک مسئله، /learn بزن.[/dim]")
+                else:
+                    t = Table(title=f"مهارت‌ها ({len(rows)})", box=None, padding=(0, 2))
+                    t.add_column("نام", style="cyan", no_wrap=True)
+                    t.add_column("استفاده", justify="right")
+                    t.add_column("توضیح", style="dim")
+                    for r in rows:
+                        t.add_row(r["name"], f"{r['uses']}×", r["description"][:60])
+                    console.print(t)
+                    st = SK.stats()
+                    console.print(f"[dim]مجموع: {st['total']} مهارت · "
+                                  f"{st['uses_total']} بار استفاده[/dim]")
+            elif cmd == "/skill":
+                if not arg:
+                    console.print("[red]نام مهارت را بده: /skill <نام>[/red]")
+                else:
+                    r = SK.read_skill(arg.strip())
+                    if r.get("error"):
+                        console.print(f"[red]{r['error']}[/red]")
+                    else:
+                        console.print(Panel(Markdown(r["content"][:5000]),
+                                            title=f"[bold]{arg}[/bold]",
+                                            border_style="cyan"))
+            elif cmd == "/learn":
+                if len(sess.messages) < 2:
+                    console.print("[red]اول یک مسئله را حل کن، بعد /learn[/red]")
+                else:
+                    last_u = next((m["content"] for m in reversed(sess.messages)
+                                   if m["role"] == "user"), "")
+                    last_a = next((m["content"] for m in reversed(sess.messages)
+                                   if m["role"] == "assistant"), "")
+                    nm = arg.strip() or re.sub(r"[^a-z0-9]+", "-",
+                                               (last_u[:40].lower() or "lesson")).strip("-")
+                    r = SK.learn_from_task(last_u[:120], last_a[:1800], nm,
+                                           f"آموخته از: {last_u[:70]}")
+                    if r.get("ok"):
+                        console.print(f"[green]✓[/green] مهارت «{nm}» ذخیره شد "
+                                      f"({r.get('mode', 'created')})")
+                    else:
+                        console.print(f"[red]{r.get('error')}[/red]")
+            elif cmd == "/forget":
+                if not arg:
+                    console.print("[red]نام بده: /forget <نام>[/red]")
+                else:
+                    r = SK.delete_skill(arg.strip())
+                    console.print(f"[green]✓ حذف شد: {arg}[/green]" if r.get("ok")
+                                  else f"[red]{r.get('error')}[/red]")
+            elif cmd == "/status":
+                await cmd_status(sess)
+            elif cmd == "/sys":
+                if arg:
+                    sess.system = arg
+                    console.print("[green]✓[/green] شخصیت به‌روز شد")
+                else:
+                    console.print(Panel(sess.system[:600], title="System", border_style="dim"))
+            elif cmd == "/history":
+                if not sess.messages:
+                    console.print("[dim]تاریخچه خالی است[/dim]")
+                for m in sess.messages:
+                    role = m["role"]
+                    col = "green" if role == "user" else "cyan"
+                    console.print(f"[{col}]{role}:[/{col}] {str(m.get('content',''))[:300]}")
+            elif cmd == "/save":
+                name = arg or "session"
+                f = CACHE / f"{name}.json"
+                f.write_text(json.dumps(sess.to_dict(), ensure_ascii=False, indent=1))
+                console.print(f"[green]✓[/green] ذخیره شد: {f}")
+            elif cmd == "/load":
+                name = arg or "session"
+                f = CACHE / f"{name}.json"
+                if f.exists():
+                    sess = Session.from_dict(json.loads(f.read_text()))
+                    console.print(f"[green]✓[/green] بارگذاری شد ({len(sess.messages)} پیام)")
+                else:
+                    console.print(f"[red]پیدا نشد: {f}[/red]")
+            elif cmd == "/clear":
+                banner(sess)
+            else:
+                console.print(f"[red]دستور ناشناخته: {cmd}[/red] — /help")
+            continue
+
+        # ── پیام عادی ──
+        sess.messages.append({"role": "user", "content": text})
+        try:
+            res = await run_agent_stream(sess, text)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            sess.stop_flag = False
+            console.print("\n[yellow]⏹ با Ctrl+C متوقف شد[/yellow]")
+            sess.messages.pop()
+            continue
+
+        console.print()
+        if res.get("error"):
+            console.print(Panel(f"[err]⚠ {_esc(res['error'])}[/err]", border_style="#7f1d1d",
+                                title="[err]خطا[/err]", title_align="right", padding=(0, 2)))
+            sess.messages.pop()      # پیام ناموفق را نگه ندار
+            continue
+
+        reply = res.get("reply", "")
+        # پاکسازی: مدل‌های ضعیف ممکن است tool_call را به‌صورت متن چاپ کنند
+        if not res.get("steps") and "tool_calls" in reply and "<" in reply:
+            reply = "(مدل تلاش کرد ابزار را متنی تولید کند — دوباره بپرس یا مدل قوی‌تری انتخاب کن)"
+        sess.messages.append({"role": "assistant", "content": reply})
+
+        if reply.strip():
+            console.print()
+            console.print(Panel(Markdown(reply), border_style="#334155",
+                                padding=(1, 2), title="[hint]پاسخ[/hint]",
+                                title_align="right"))
+
+        u = res.get("usage") or {}
+        st = len(res.get("steps", []))
+        bits = []
+        if st:
+            bits.append(f"[tool]{st} ابزار[/tool]")
+        if u.get("total_tokens"):
+            bits.append(f"[dim]{u['total_tokens']} توکن[/dim]")
+        if bits:
+            console.print("  " + "  [hint]·[/hint]  ".join(bits))
+        console.print()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

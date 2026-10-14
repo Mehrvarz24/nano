@@ -1,0 +1,21 @@
+# محیط و کش
+.venv/
+__pycache__/
+*.pyc
+.cache/
+
+# داده و رمز
+nano_hermes.db
+config.json
+*.log
+
+# مهارت‌های کاربر
+skills/*/
+!skills/.gitkeep
+!skills/README.md
+
+# ادیتور
+.vscode/
+.idea/
+*.swp
+.DS_Store
