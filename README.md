@@ -221,6 +221,36 @@ No Docker, no Node, no heavy database (SQLite only).
 
 ---
 
+## Command-line arguments
+
+`nano` accepts real arguments (no more "nano /provider" getting stuck in a prompt):
+
+```bash
+nano                       # interactive chat
+nano setup                 # first-run wizard: pick provider + model
+nano help                  # command reference
+nano --version             # version
+nano provider add          # add a provider (43-endpoint catalog, arrow keys)
+nano provider list         # list configured providers
+nano provider remove NAME  # delete a provider
+nano models                # list providers + models
+nano skills                # list learned skills
+nano "what is using RAM?"  # one-shot question, then exit
+```
+
+### Provider catalog
+
+`nano provider add` ships with **43 known endpoints** (OpenAI, Anthropic, DeepSeek,
+Groq, OpenRouter, Gemini, Cerebras, Mistral, xAI, NVIDIA, Nous, ...). Pick one with
+the arrow keys and only the API key is left to type. Model IDs are auto-detected
+from the endpoint's `/models` when a key is supplied; otherwise type them
+comma-separated.
+
+Choose `custom` to enter any OpenAI-compatible endpoint by hand.
+
+
+---
+
 ## License
 
 MIT

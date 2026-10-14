@@ -1,0 +1,260 @@
+[
+ {
+  "id": "actual",
+  "name": "Actual Computer",
+  "base_url": "",
+  "env": "ACTUAL_API_KEY,"
+ },
+ {
+  "id": "ai-gateway",
+  "name": "Ai Gateway",
+  "base_url": "https://ai-gateway.vercel.sh/v1",
+  "env": "AI_GATEWAY_API_KEY,"
+ },
+ {
+  "id": "alibaba",
+  "name": "Alibaba Cloud DashScope (China)",
+  "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+  "env": "DASHSCOPE_API_KEY,"
+ },
+ {
+  "id": "alibaba-coding-plan",
+  "name": "Alibaba Cloud (Coding Plan)",
+  "base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",
+  "env": "ALIBABA_CODING_PLAN_API_KEY, DASHSCOPE_API_KEY, ALIBABA_CODING_PLAN_BASE_URL"
+ },
+ {
+  "id": "anthropic",
+  "name": "Anthropic",
+  "base_url": "https://api.anthropic.com",
+  "env": "ANTHROPIC_API_KEY, ANTHROPIC_TOKEN, CLAUDE_CODE_OAUTH_TOKEN"
+ },
+ {
+  "id": "arcee",
+  "name": "Arcee",
+  "base_url": "https://api.arcee.ai/api/v1",
+  "env": "ARCEEAI_API_KEY,"
+ },
+ {
+  "id": "azure-foundry",
+  "name": "Azure Foundry",
+  "base_url": "",
+  "env": "AZURE_FOUNDRY_API_KEY, AZURE_FOUNDRY_BASE_URL"
+ },
+ {
+  "id": "bedrock",
+  "name": "Bedrock",
+  "base_url": "https://bedrock-runtime.us-east-1.amazonaws.com",
+  "env": ""
+ },
+ {
+  "id": "cerebras",
+  "name": "Cerebras",
+  "base_url": "https://api.cerebras.ai/v1",
+  "env": "CEREBRAS_API_KEY"
+ },
+ {
+  "id": "commandcode",
+  "name": "CommandCode",
+  "base_url": "",
+  "env": "COMMANDCODE_API_KEY, COMMANDCODE_BASE_URL"
+ },
+ {
+  "id": "copilot",
+  "name": "Copilot",
+  "base_url": "https://api.githubcopilot.com",
+  "env": "COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN"
+ },
+ {
+  "id": "copilot-acp",
+  "name": "Copilot Acp",
+  "base_url": "acp://copilot",
+  "env": ""
+ },
+ {
+  "id": "deepinfra",
+  "name": "DeepInfra",
+  "base_url": "https://api.deepinfra.com/v1/openai",
+  "env": "DEEPINFRA_API_KEY, DEEPINFRA_BASE_URL"
+ },
+ {
+  "id": "deepseek",
+  "name": "DeepSeek",
+  "base_url": "https://api.deepseek.com/v1",
+  "env": "DEEPSEEK_API_KEY,"
+ },
+ {
+  "id": "fireworks",
+  "name": "Fireworks AI",
+  "base_url": "https://api.fireworks.ai/inference/v1",
+  "env": "FIREWORKS_API_KEY,"
+ },
+ {
+  "id": "gemini",
+  "name": "Gemini",
+  "base_url": "https://generativelanguage.googleapis.com/v1beta",
+  "env": "GOOGLE_API_KEY, GEMINI_API_KEY"
+ },
+ {
+  "id": "gmi",
+  "name": "GMI Cloud",
+  "base_url": "https://api.gmi-serving.com/v1",
+  "env": "GMI_API_KEY, GMI_BASE_URL"
+ },
+ {
+  "id": "groq",
+  "name": "Groq",
+  "base_url": "https://api.groq.com/openai/v1",
+  "env": "GROQ_API_KEY"
+ },
+ {
+  "id": "huggingface",
+  "name": "HuggingFace",
+  "base_url": "https://router.huggingface.co/v1",
+  "env": "HF_TOKEN,"
+ },
+ {
+  "id": "kilocode",
+  "name": "Kilocode",
+  "base_url": "https://api.kilo.ai/api/gateway",
+  "env": "KILOCODE_API_KEY,"
+ },
+ {
+  "id": "meta-ai",
+  "name": "Meta Model API",
+  "base_url": "",
+  "env": "MODEL_API_KEY, META_API_KEY, META_MODEL_API_KEY, META_BASE_URL"
+ },
+ {
+  "id": "minimax",
+  "name": "MiniMax (OAuth)",
+  "base_url": "https://api.minimax.io/anthropic",
+  "env": "MINIMAX_API_KEY,"
+ },
+ {
+  "id": "mistral",
+  "name": "Mistral AI",
+  "base_url": "https://api.mistral.ai/v1",
+  "env": "MISTRAL_API_KEY"
+ },
+ {
+  "id": "nebius-token-factory",
+  "name": "Nebius Token Factory",
+  "base_url": "https://api.tokenfactory.nebius.com/v1",
+  "env": "NEBIUS_API_KEY, NEBIUS_TOKEN_FACTORY_API_KEY, NEBIUS_BASE_URL"
+ },
+ {
+  "id": "nous",
+  "name": "Nous Research",
+  "base_url": "https://inference-api.nousresearch.com/v1",
+  "env": "NOUS_API_KEY,"
+ },
+ {
+  "id": "novita",
+  "name": "NovitaAI",
+  "base_url": "https://api.novita.ai/openai/v1",
+  "env": "NOVITA_API_KEY, NOVITA_BASE_URL"
+ },
+ {
+  "id": "nvidia",
+  "name": "NVIDIA NIM",
+  "base_url": "https://integrate.api.nvidia.com/v1",
+  "env": "NVIDIA_API_KEY,"
+ },
+ {
+  "id": "ollama-cloud",
+  "name": "Ollama Cloud",
+  "base_url": "https://ollama.com/v1",
+  "env": "OLLAMA_API_KEY,"
+ },
+ {
+  "id": "openai",
+  "name": "OpenAI",
+  "base_url": "https://api.openai.com/v1",
+  "env": "OPENAI_API_KEY"
+ },
+ {
+  "id": "openai-codex",
+  "name": "Openai Codex",
+  "base_url": "https://chatgpt.com/backend-api/codex",
+  "env": ""
+ },
+ {
+  "id": "opencode-zen",
+  "name": "Opencode Zen",
+  "base_url": "https://opencode.ai/zen/v1",
+  "env": "OPENCODE_ZEN_API_KEY,"
+ },
+ {
+  "id": "openrouter",
+  "name": "OpenRouter",
+  "base_url": "https://openrouter.ai/api/v1",
+  "env": "OPENROUTER_API_KEY,"
+ },
+ {
+  "id": "perplexity",
+  "name": "Perplexity",
+  "base_url": "https://api.perplexity.ai",
+  "env": "PERPLEXITY_API_KEY"
+ },
+ {
+  "id": "qwen-oauth",
+  "name": "Qwen Oauth",
+  "base_url": "https://portal.qwen.ai/v1",
+  "env": "QWEN_API_KEY,"
+ },
+ {
+  "id": "router-caps-warm",
+  "name": "Ramp Router",
+  "base_url": "",
+  "env": "RAMP_ROUTER_API_KEY, ROUTER_API_KEY, RAMP_ROUTER_BASE_URL"
+ },
+ {
+  "id": "sambanova",
+  "name": "SambaNova",
+  "base_url": "https://api.sambanova.ai/v1",
+  "env": "SAMBANOVA_API_KEY"
+ },
+ {
+  "id": "stepfun",
+  "name": "Stepfun",
+  "base_url": "https://api.stepfun.ai/step_plan/v1",
+  "env": "STEPFUN_API_KEY,"
+ },
+ {
+  "id": "together",
+  "name": "Together AI",
+  "base_url": "https://api.together.xyz/v1",
+  "env": "TOGETHER_API_KEY"
+ },
+ {
+  "id": "upstage",
+  "name": "Upstage Solar",
+  "base_url": "https://api.upstage.ai/v1",
+  "env": "UPSTAGE_API_KEY, UPSTAGE_BASE_URL"
+ },
+ {
+  "id": "vertex",
+  "name": "Vertex",
+  "base_url": "https://aiplatform.googleapis.com",
+  "env": ""
+ },
+ {
+  "id": "xai",
+  "name": "Xai",
+  "base_url": "https://api.x.ai/v1",
+  "env": "XAI_API_KEY,"
+ },
+ {
+  "id": "xiaomi",
+  "name": "Xiaomi",
+  "base_url": "https://api.xiaomimimo.com/v1",
+  "env": "XIAOMI_API_KEY,"
+ },
+ {
+  "id": "zai",
+  "name": "Z.AI (GLM)",
+  "base_url": "https://api.z.ai/api/paas/v4",
+  "env": "GLM_API_KEY, ZAI_API_KEY, Z_AI_API_KEY"
+ }
+]

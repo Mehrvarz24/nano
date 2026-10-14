@@ -19,6 +19,8 @@ Commands:
   /exit           quit
 """
 import asyncio, json, os, re, signal, sqlite3, sys, time
+VERSION = "1.1.0"
+
 from pathlib import Path
 
 # ==================== settings ====================
@@ -81,7 +83,16 @@ NANO_THEME = Theme({
     "skill":    "#f472b6",           # pink
 })
 
-console = Console(theme=NANO_THEME, highlight=False)
+# force_terminal: rich goes silent when stdout is not a TTY (pipes, CI, `nano help | grep`).
+# NANO_* env vars let a caller override; NO_COLOR is honoured.
+_NO_COLOR = bool(os.getenv("NO_COLOR"))
+console = Console(
+    theme=NANO_THEME,
+    highlight=False,
+    force_terminal=None if os.getenv("NANO_NO_FORCE_TTY") else True,
+    no_color=_NO_COLOR,
+    soft_wrap=False,
+)
 APP = "nano"
 
 import aiohttp
@@ -706,30 +717,223 @@ def boot_time():
     return 0
 
 
-def cmd_add_provider():
+def _catalog():
+    """Load the bundled provider catalog (43 known endpoints)."""
     try:
-        name = console.input("[cyan]provider name:[/cyan] ").strip()
-        url = console.input("[cyan]Base URL:[/cyan] ").strip()
-        key = console.input("[cyan]API key (empty = from env):[/cyan] ").strip()
-        mods = console.input("[cyan]models (comma separated):[/cyan] ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if not name or not url:
-        console.print("[red]name and URL are required.[/red]")
-        return
-    models = [m.strip() for m in mods.split(",") if m.strip()]
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers_catalog.json")
+        return json.load(open(p, encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _pick(title, rows, default=0, hint=None):
+    """Arrow-key picker with a numbered fallback for non-TTY stdin."""
+    if not rows:
+        return -1
+    if hint:
+        console.print(f"[dim]{hint}[/dim]")
+    try:
+        from prompt_toolkit.shortcuts import radiolist_dialog
+        from prompt_toolkit.styles import Style as PTStyle
+        from prompt_toolkit.formatted_text import HTML
+        style = PTStyle.from_dict({
+            "dialog": "bg:#0d0d0f", "dialog frame.label": "bg:#0d0d0f #c9a962 bold",
+            "dialog.body": "bg:#0d0d0f #f0e9d8", "radio-selected": "bg:#c9a962 #0d0d0f bold",
+            "radio-checked": "#c9a962 bold", "button": "bg:#1e293b #f0e9d8",
+            "button.focused": "bg:#c9a962 #0d0d0f bold",
+        })
+        dlg = radiolist_dialog(
+            title=title, text=HTML("<style fg='#94a3b8'>up/down move, Enter select, Esc cancel</style>"),
+            values=[(str(i), r) for i, r in enumerate(rows)],
+            default=str(default), style=style)
+        # prompt_toolkit 3.0.4x+ returns an awaitable from run(); older versions a value.
+        res = dlg.run()
+        if hasattr(res, "__await__"):
+            try:
+                res = asyncio.get_event_loop().run_until_complete(res)
+            except RuntimeError:
+                res = asyncio.run(res)
+        return int(res) if res is not None else -1
+    except Exception:
+        # fallback: numbered list
+        console.print(f"[brand]{title}[/brand]")
+        for i, r in enumerate(rows, 1):
+            mark = "[accent]›[/accent]" if i-1 == default else " "
+            console.print(f"  {mark} [bold]{i:2}[/bold]. {r}")
+        try:
+            a = console.input("  [dim]choice [1-%d, Enter=%d]:[/dim] " % (len(rows), default+1)).strip()
+        except (EOFError, KeyboardInterrupt):
+            return -1
+        if not a:
+            return default
+        try:
+            n = int(a) - 1
+            return n if 0 <= n < len(rows) else -1
+        except ValueError:
+            return -1
+
+
+def cmd_add_provider():
+    """Add a provider: pick from the catalog or enter a custom endpoint."""
+    cat = _catalog()
+    if cat:
+        rows = [f"{c['id']:<24} {c['name']}" for c in cat]
+        rows.append("custom ................ enter manually")
+        i = _pick("Add provider", rows, 0, "Pick a known endpoint, or 'custom' to type your own.")
+        if i < 0:
+            console.print("[dim]cancelled[/dim]")
+            return
+        if i < len(cat):
+            pick = cat[i]
+            name, url = pick["id"], pick["base_url"]
+            env  = pick.get("env", "")
+            console.print(f"\n  [brand]{pick['name']}[/brand]")
+            console.print(f"  [dim]{url}[/dim]\n")
+        else:
+            name = url = env = ""
+    else:
+        name = url = env = ""
+
+    def ask(label, dflt=""):
+        label2 = f"{label} [dim]({dflt})[/dim]" if dflt else label
+        try:
+            v = console.input(f"  [cyan]{label2}:[/cyan] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        return v or dflt
+
+    if not name:
+        name = ask("provider id", "")
+        if name is None or not name:
+            console.print("[red]provider id is required.[/red]"); return
+    if not url:
+        url = ask("Base URL", "")
+        if url is None or not url:
+            console.print("[red]Base URL is required.[/red]"); return
+
+    key = ask("API key (blank = read from env var)", "")
+    if key is None: key = ""
+
+    # try to auto-detect models from /models
+    models = []
+    if url and key:
+        try:
+            import urllib.request
+            req = urllib.request.Request(url.rstrip("/") + "/models",
+                                         headers={"Authorization": f"Bearer {key}"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read().decode("utf-8", "replace"))
+            models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+            console.print(f"  [green]✓[/green] detected [accent]{len(models)}[/accent] models")
+        except Exception as e:
+            console.print(f"  [dim]model auto-detect skipped ({type(e).__name__})[/dim]")
+
+    if not models:
+        mods = ask("models (comma separated)", "")
+        models = [m.strip() for m in (mods or "").split(",") if m.strip()]
+
     c = db()
     c.execute("""INSERT INTO providers(name,base_url,key_env,api_key,models,source,created)
                  VALUES(?,?,?,?,?,?,?)
                  ON CONFLICT(name) DO UPDATE SET base_url=excluded.base_url,
                  api_key=excluded.api_key, models=excluded.models""",
-              (name, url, "", key, json.dumps(models, ensure_ascii=False), "manual", time.time()))
+              (name, url, env, key, json.dumps(models, ensure_ascii=False), "manual", time.time()))
     c.commit(); c.close()
-    console.print(f"[green]ok[/green] provider '{name}' saved ({len(models)} models)")
+    console.print(f"[green]✓[/green] provider [brand]{name}[/brand] saved "
+                  f"([accent]{len(models)}[/accent] models)\n")
+
+
+def cmd_remove_provider(name=None):
+    """Delete a provider."""
+    provs = get_providers()
+    if not provs:
+        console.print("[warn]no providers[/warn]"); return
+    if not name:
+        rows = [f"{p['name']:<22} {p.get('base_url','')[:52]}" for p in provs]
+        i = _pick("Remove provider", rows, 0)
+        if i < 0: console.print("[dim]cancelled[/dim]"); return
+        name = provs[i]["name"]
+    c = db(); c.execute("DELETE FROM providers WHERE name=?", (name,)); c.commit(); c.close()
+    console.print(f"[green]✓[/green] removed [brand]{name}[/brand]")
+
+
+def cmd_setup():
+    """Interactive first-run setup, hermes-style."""
+    console.print()
+    console.print(Panel("[brand]Nano-Hermes setup[/brand]\n[dim]Configure a provider and a model.[/dim]",
+                        border_style="#334155", padding=(1,2)))
+    provs = get_providers()
+    if not provs:
+        console.print("\n[dim]No providers yet — let's add one.\n[/dim]")
+        cmd_add_provider()
+        provs = get_providers()
+    if not provs:
+        console.print("[red]still no providers — aborting[/red]"); return
+    # pick provider
+    rows = [f"{p['name']:<22} {p.get('base_url','')[:52]}" for p in provs]
+    i = _pick("Default provider", rows, 0)
+    if i < 0: return
+    p = provs[i]
+    models = p.get("models") or []
+    if isinstance(models, str):
+        try: models = json.loads(models or "[]")
+        except Exception: models = []
+    if models:
+        j = _pick("Default model", models, 0)
+        model = models[j] if j >= 0 else models[0]
+    else:
+        try: model = console.input("  [cyan]model id:[/cyan] ").strip()
+        except (EOFError, KeyboardInterrupt): return
+    c = load_cfg(); c["provider"] = p["name"]; c["model"] = model; save_cfg(c)
+    console.print(f"\n[green]✓[/green] ready — [brand]{p['name']}[/brand] / [accent]{model}[/accent]")
+    console.print("[dim]run `nano` to start chatting[/dim]\n")
 
 
 # ═══════════════════ MAIN ═══════════════════
 async def main():
+    # ── command-line arguments (hermes-style) ──
+    argv = [a for a in sys.argv[1:]]
+    if argv:
+        a0 = argv[0].lstrip("/").lower()
+        if a0 in ("setup", "init", "configure", "provider", "add-provider"):
+            ensure_ready()
+            if a0 == "provider" and len(argv) > 1:
+                argv = argv[1:]
+                # nano provider add / remove / list
+                sub = argv[0].lower()
+                if sub in ("add", "new"):     cmd_add_provider(); return
+                if sub in ("rm", "remove", "del", "delete"):
+                    cmd_remove_provider(argv[1] if len(argv) > 1 else None); return
+                if sub in ("list", "ls"):
+                    for p in get_providers():
+                        console.print(f"[brand]{p['name']}[/brand] [dim]{p.get('base_url','')}[/dim]"); return
+            cmd_setup() if a0 in ("setup","init","configure") else cmd_add_provider()
+            return
+        if a0 in ("help", "h", "-h", "--help"):
+            cmd_help(); return
+        if a0 in ("version", "-v", "--version"):
+            console.print(f"[brand]nano[/brand] [accent]{VERSION}[/accent]"); return
+        if a0 in ("skills", "skill"):
+            from skills import list_skills
+            cmd_skills() if "cmd_skills" in globals() else [console.print(f"[brand]{n}[/brand] [dim]{d}[/dim]") for n,d in list_skills()]
+            return
+        if a0 in ("providers", "models"):
+            ensure_ready()
+            cmd_models() if a0 == "models" else [console.print(f"[brand]{p['name']}[/brand]") for p in get_providers()]
+            return
+        # unknown → treat as a one-shot question
+        ensure_ready()
+        cfg = load_cfg(); provs = get_providers()
+        if provs:
+            p = next((x for x in provs if x["name"] == cfg.get("provider")), provs[0])
+            sess = Session(p["name"], cfg.get("model") or (p["models"][0] if p["models"] else ""))
+            banner(sess)
+            await sess.ask(" ".join(argv))
+            return
+        console.print(f"[warn]unknown command:[/warn] {argv[0]}")
+        console.print("[dim]try: nano setup | nano provider add | nano help[/dim]")
+        return
+
     ensure_ready()
     cfg = load_cfg()
     provs = get_providers()
