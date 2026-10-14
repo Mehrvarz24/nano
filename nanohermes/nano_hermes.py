@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nano-Hermes — ایجنت سبک با دسترسی روت، وب‌سِرج و پنل پروایدر
+Nano-Hermes - lightweight agent with root access, web search and a provider panel
 
-  • چت با پروایدرهای Hermes (خودکار از config.yaml) + افزودن دستی
-  • ابزارها: run_bash، web_search، read_url، manage_file
-  • حلقهٔ ایجنت (tool-calling loop)
-  • پنل وب + API + SQLite
+  - chat with Hermes providers (auto-loaded from config.yaml) plus manual ones
+  - tools: run_bash, web_search, read_url, manage_file, skills
+  - agent tool-calling loop
+  - web panel + API + SQLite
 """
 import asyncio, json, os, re, sqlite3, time, uuid
 from pathlib import Path
@@ -14,11 +14,11 @@ from aiohttp import web, ClientSession
 
 import skills as SK
 
-# ══════════════════════ تنظیمات ══════════════════════
+# ====================== settings ======================
 BASE       = Path(__file__).resolve().parent
 DB_PATH    = BASE / "nano_hermes.db"
 
-# ── config.json (ساختهٔ install.sh) ──
+# -- config.json (written by install.sh) --
 _CFG_JSON = BASE / "config.json"
 CFG_DATA = {}
 if _CFG_JSON.exists():
@@ -46,26 +46,26 @@ DANGER = re.compile(
     re.I,
 )
 
-SYSTEM_PROMPT = """تو Nano-Hermes هستی — یک ایجنت خودمختار با دسترسی کامل (root) به یک سرور لینوکس و دسترسی زنده به وب.
+SYSTEM_PROMPT = """You are Nano-Hermes, an autonomous AI agent with full (root) access to a Linux server and live web access.
 
-ابزارهای تو:
-- run_bash: اجرای دستور شل. برای بررسی سیستم، سرویس‌ها، لاگ‌ها، داکر، شبکه و هر کار سیستمی.
-- web_search: جست‌وجوی وب برای اطلاعات تازه.
-- read_url: خواندن محتوای یک صفحهٔ وب.
-- manage_file: خواندن یا نوشتن فایل روی سرور.
-- skill_list / skill_view / skill_manage: ذهن خودرشد — مهارت‌های آموخته‌شده.
+Your tools:
+- run_bash: run shell commands. Use it for system checks, services, logs, Docker, networking, any system task.
+- web_search: layered web search (deepseek-search with citations, then Jina, DDG, Wikipedia).
+- read_url: read a web page as clean text.
+- manage_file: read or write files on the server.
+- skill_list / skill_view / skill_manage: self-growing memory - the skills you have learned.
 
-قواعد:
-- 📚 ذهن خودرشد: برای دیدن مهارت‌ها فقط و فقط ابزار skill_list را صدا بزن (هرگز با run_bash پوشهٔ skills را نگرد).
-- قبل از کارهای تکراری، مهارت مرتبط را با skill_view بخوان.
-- 💡 بعد از حل موفق یک مسئله یا کشف ترفند، فوراً با skill_manage ذخیره‌اش کن.
-- فارسی جواب بده مگر اینکه کاربر انگلیسی بنویسد.
-- مستقیم و بدون حاشیه. اول نتیجه، بعد توضیح کوتاه.
-- قبل از کارهای چندمرحله‌ای یک‌خط بگو چیکار می‌کنی، بعد اجرا کن.
-- هرگز کلید یا توکن را در خروجی چاپ نکن (اگر لازم شد ماسک کن).
+Rules:
+- Self-growing memory: to see skills, call the skill_list tool ONLY (never look for the skills folder with run_bash).
+- Before repeating a task, read the relevant skill with skill_view.
+- After solving a hard problem or discovering a trick, save it immediately with skill_manage.
+- Reply in Persian unless the user writes in English.
+- Be direct. Lead with the result, then a short explanation.
+- Before a multi-step task, state in one line what you are about to do, then run it.
+- Never print API keys or tokens in the output (mask them if needed).
 """
 
-# ══════════════════════ دیتابیس ══════════════════════
+# ====================== database ======================
 def init_db():
     c = sqlite3.connect(DB_PATH)
     c.executescript("""
@@ -94,13 +94,13 @@ def db():
 
 
 def load_hermes_providers():
-    """خواندن پروایدرهای Hermes از config.yaml + .env"""
+    """Read Hermes providers from config.yaml plus .env"""
     out = []
     try:
         import yaml
         cfg = yaml.safe_load(HERMES_CFG.read_text()) or {}
     except Exception as e:
-        return out, f"config.yaml خوانده نشد: {e}"
+        return out, f"could not read config.yaml: {e}"
 
     env = {}
     try:
@@ -164,10 +164,10 @@ def get_key(prov):
     return ""
 
 
-# ══════════════════════ ابزارها ══════════════════════
+# ====================== tools ======================
 async def tool_run_bash(command: str = "", **kw) -> str:
     if DANGER.search(command):
-        return "⛔ دستور پرخطر شناسایی شد و اجرا نشد. کاربر باید صریحاً تأیید کند."
+        return "blocked: destructive command refused."
     try:
         proc = await asyncio.create_subprocess_shell(
             command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
@@ -175,13 +175,13 @@ async def tool_run_bash(command: str = "", **kw) -> str:
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=CMD_TIMEOUT)
         except asyncio.TimeoutError:
             proc.kill()
-            return f"⏱ تایم‌اوت بعد از {CMD_TIMEOUT}s"
+            return f"timed out after {CMD_TIMEOUT}s"
         text = out.decode("utf-8", "replace")
         if len(text) > MAX_OUTPUT:
-            text = text[:MAX_OUTPUT] + f"\n… [بریده — کل {len(text)} بایت]"
-        return text or "(بدون خروجی)"
+            text = text[:MAX_OUTPUT] + f"\n... [truncated - {len(text)} bytes total]"
+        return text or "(no output)"
     except Exception as e:
-        return f"خطا: {e}"
+        return f"error: {e}"
 
 
 async def tool_web_search(query: str = "", max_results: int = 5, **kw) -> str:
@@ -199,14 +199,14 @@ async def tool_manage_file(action: str = "read", path: str = "", content: str = 
     try:
         if action == "read":
             if not p.exists():
-                return "فایل نیست."
+                return "file not found."
             data = p.read_text(errors="replace")
             return data[:MAX_OUTPUT] + ("…" if len(data) > MAX_OUTPUT else "")
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content or "")
-        return f"✅ نوشته شد: {p} ({len(content or '')} کاراکتر)"
+        return f"written: {p} ({len(content or '')} chars)"
     except Exception as e:
-        return f"خطای فایل: {e}"
+        return f"file error: {e}"
 
 
 TOOLS = [
@@ -214,7 +214,7 @@ TOOLS = [
         "name": "run_bash",
         "description": "Execute a bash command on the Linux server and return stdout/stderr.",
         "parameters": {"type": "object", "properties": {
-            "command": {"type": "string", "description": "دستور شل"}}, "required": ["command"]}}},
+            "command": {"type": "string", "description": "shell command to run"}}, "required": ["command"]}}},
     {"type": "function", "function": {
         "name": "web_search",
         "description": "Search the web (DuckDuckGo) for up-to-date information.",
@@ -226,7 +226,7 @@ TOOLS = [
         "description": "Fetch and read the clean text of any webpage URL (uses Jina Reader for better extraction).",
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string"},
-            "use_reader": {"type": "boolean", "description": "استفاده از Jina Reader (پیش‌فرض: بله)"}},
+            "use_reader": {"type": "boolean", "description": "use Jina Reader (default: yes)"}},
             "required": ["url"]}}},
     {"type": "function", "function": {
         "name": "manage_file",
@@ -240,8 +240,8 @@ TOOLS = [
 async def tool_skill_list(**kw):
     st = SK.stats()
     if not st["skills"]:
-        return "هنوز مهارتی یاد نگرفته‌ام."
-    return "\n".join([f"📚 {st['total']} مهارت · {st['uses_total']} بار استفاده:"] +
+        return "no skills learned yet."
+    return "\n".join([f"skills: {st['total']} - total uses: {st['uses_total']}"] +
                       [f"• {x['name']} ({x['uses']}×) — {x['description']}" for x in st["skills"]])
 
 
@@ -264,7 +264,7 @@ async def tool_skill_manage(action="", name="", description="", keywords="",
         return str(SK.delete_skill(name))
     if action == "add_file":
         return str(SK.add_file(name, file_path, content))
-    return f"اکشن نامعتبر: {action}"
+    return f"invalid action: {action}"
 
 
 TOOL_FN = {"run_bash": tool_run_bash, "web_search": tool_web_search,
@@ -278,18 +278,18 @@ TOOL_FN = {"run_bash": tool_run_bash, "web_search": tool_web_search,
 async def call_tool(name, args):
     fn = TOOL_FN.get(name)
     if not fn:
-        return f"ابزار ناشناخته: {name}"
+        return f"unknown tool: {name}"
     try:
         return await fn(**(args if isinstance(args, dict) else {}))
     except Exception as e:
-        return f"خطای ابزار: {e}"
+        return f"tool error: {e}"
 
 
 # ══════════════════════ LLM ══════════════════════
 async def llm_chat(prov, model, messages, use_tools=True, temperature=0.4):
     key = get_key(prov)
     if not key:
-        return {"error": f"کلید پروایدر «{prov['name']}» پیدا نشد."}
+        return {"error": f"no API key found for provider '{prov['name']}'"}
     url = prov["base_url"].rstrip("/") + "/chat/completions"
     body = {"model": model, "messages": messages, "temperature": temperature, "stream": False}
     if use_tools:
@@ -301,20 +301,20 @@ async def llm_chat(prov, model, messages, use_tools=True, temperature=0.4):
             async with s.post(url, json=body, headers=headers, timeout=180) as r:
                 data = await r.json(content_type=None)
         if not isinstance(data, dict):
-            return {"error": "پاسخ نامعتبر"}
+            return {"error": "invalid response"}
         if data.get("error"):
             return {"error": str(data["error"])[:500]}
         ch = (data.get("choices") or [{}])[0]
         msg = ch.get("message") or {}
         return {"message": msg, "usage": data.get("usage")}
     except Exception as e:
-        return {"error": f"خطای پروایدر: {e}"}
+        return {"error": f"provider error: {e}"}
 
 
 async def agent_run(prov_name, model, history):
     prov = get_provider(prov_name)
     if not prov:
-        return {"error": f"پروایدر «{prov_name}» نیست."}
+        return {"error": f"provider not found: {prov_name}"}
     if not model:
         ms = json.loads(prov.get("models") or "[]")
         model = ms[0] if ms else "auto"
@@ -332,7 +332,7 @@ async def agent_run(prov_name, model, history):
         content = msg.get("content") or ""
 
         if not tcs:
-            return {"reply": content or "(بدون پاسخ)", "steps": steps, "usage": res.get("usage"),
+            return {"reply": content or "(no response)", "steps": steps, "usage": res.get("usage"),
                     "steps_count": len(steps)}
 
         msgs.append({"role": "assistant", "content": content, "tool_calls": tcs})
@@ -349,15 +349,15 @@ async def agent_run(prov_name, model, history):
             steps.append({
                 "tool": name, "args": args, "out": out[:1200],
                 "ms": ms, "chars": len(out),
-                "ok": not out.startswith(("خطا", "⛔", "⏱", "Tool", "خطای")),
+                "ok": not out.startswith(("error", "blocked", "timed out")),
             })
             msgs.append({
                 "role": "tool", "tool_call_id": tc.get("id"),
-                "name": name,                      # سازگاری با پروایدرهایی که name لازم دارند
+                "name": name,                      # compatibility with providers that require name
                 "content": out,
             })
 
-    return {"reply": "⚠️ به سقف مراحل رسیدم.", "steps": steps}
+    return {"reply": "reached the maximum number of tool steps.", "steps": steps}
 
 
 # ══════════════════════ API ══════════════════════
@@ -412,7 +412,7 @@ async def add_provider(req):
         return web.json_response({"error": "unauthorized"}, status=401)
     d = await req.json()
     if not d.get("name") or not d.get("base_url"):
-        return web.json_response({"error": "name و base_url لازم است"}, status=400)
+        return web.json_response({"error": "name and base_url are required"}, status=400)
     models = d.get("models") or []
     if isinstance(models, str):
         models = [m.strip() for m in models.split(",") if m.strip()]
@@ -488,7 +488,7 @@ async def api_chat(req):
     text = (d.get("message") or "").strip()
     chat_id = d.get("chat_id") or uuid.uuid4().hex[:12]
     if not text:
-        return web.json_response({"error": "پیام خالی"}, status=400)
+        return web.json_response({"error": "empty message"}, status=400)
 
     c = db()
     if not c.execute("SELECT 1 FROM chats WHERE id=?", (chat_id,)).fetchone():

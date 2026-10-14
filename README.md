@@ -1,169 +1,182 @@
 # ⚡ Nano-Hermes
 
-**دستیار ترمینالی سبک با دسترسی کامل سرور، وب‌سرچ زنده، و ذهن خودرشد (مهارت‌ها).**
+**A lightweight terminal assistant with full server access, live web search, and a self-growing skill system.**
 
-یک ایجنت کوچک و سریع که روی هر سرور لینوکسی می‌نشیند، دستور شل اجرا می‌کند، وب را می‌خواند،
-و از هر کاری که می‌کند درس می‌گیرد — بدون Docker، بدون Node، بدون وابستگی سنگین.
+A small, fast agent that runs on any Linux server, executes shell commands, reads the web,
+and learns from everything it does — no Docker, no Node, no heavy dependencies.
 
 ```
-╭────────────────── ⚡ Nano-Hermes ───────────────────╮
-│       مدل  river/deepseek-ai/DeepSeek-V4.1-Flash    │
-│   ابزارها  ● روشن                                   │
-│   استدلال  ○ عادی                                   │
-│   مهارت‌ها  ۱۲ آموخته‌شده                             │
-╰───────── دستیار سرور · وب · فایل · خودرشد ──────────╯
++------------------ ⚡ Nano-Hermes ------------------+
+|       model  river/deepseek-ai/DeepSeek-V4.1-Flash |
+|       tools  * on                                  |
+|   reasoning  o normal                              |
+|      skills  12 learned                            |
++-------- server / web / files / self-growing -------+
 
-⚡ nano ❯ چک کن چرا nginx بالا نیومده
+nano > why won't nginx start?
 
-  ┌ ▶ run_bash {"command": "systemctl status nginx --no-pager | head -20"}
-  └ ✓ 42ms · ● nginx.service - A high performance web server
-  ┌ ▶ run_bash {"command": "journalctl -u nginx -n 20 --no-pager | tail -5"}
-  └ ✓ 38ms · Address already in use: 0.0.0.0:80
+  +- > run_bash {"command": "systemctl status nginx --no-pager | head -20"}
+  +- ok 42ms - nginx.service - A high performance web server
+  +- > run_bash {"command": "journalctl -u nginx -n 20 --no-pager | tail -5"}
+  +- ok 38ms - Address already in use: 0.0.0.0:80
 
-╭──────────────────────────────── پاسخ ─╮
-│ پورت ۸۰ اشغاله. سرویس دیگری (likely x-ui) روی آن است.   │
-│ راه‌حل: systemctl stop x-ui  یا  nginx به پورت دیگر.     │
-╰──────────────────────────────────────────╯
-  2 ابزار  ·  1840 توکن
++------------------------------- reply ----------------+
+| Port 80 is already taken. Another service (likely     |
+| x-ui) is bound to it.                                 |
+| Fix: systemctl stop x-ui  - or -  move nginx to a     |
+| different port.                                       |
++-------------------------------------------------------+
+  2 tools  -  1840 tokens
 ```
 
 ---
 
-## نصب
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Mehrvarz24/nano/main/install.sh | bash
 ```
 
-اسکریپت خودش: Python را چک می‌کند → محیط مجازی می‌سازد → پکیج‌ها را نصب می‌کند →
-دستور `nano` را در PATH می‌گذارد → پیکربندی می‌سازد → تست می‌کند.
+The installer: checks Python → creates a virtual environment → installs dependencies →
+puts the `nano` command on your PATH → writes a config → verifies the installation.
 
-**گزینه‌های اختیاری (متغیرهای محیطی):**
+**Optional environment variables:**
 
-| متغیر | پیش‌فرض | کار |
+| Variable | Default | Purpose |
 |---|---|---|
-| `NANO_DIR` | `~/.nanohermes` | محل نصب |
-| `NANO_PORT` | `7580` | پورت پنل وب |
-| `NANO_PASS` | تصادفی | رمز پنل |
-| `NANO_SERVICE` | `ask` | نصب سرویس systemd (`1`/`0`) |
-| `NANO_REPO` | — | مخزن git دلخواه |
+| `NANO_DIR` | `~/.nanohermes` | install directory |
+| `NANO_PORT` | `7580` | web panel port |
+| `NANO_PASS` | random | web panel password |
+| `NANO_SERVICE` | `ask` | install a systemd service (`1` / `0` / `ask`) |
+| `NANO_REPO` | repo URL | custom git repository |
+| `NANO_BRANCH` | `main` | git branch |
 
-### نصب محلی (از سورس)
+### Install from source
 
 ```bash
 git clone https://github.com/Mehrvarz24/nano.git
-cd nanohermes
+cd nano
 bash install.sh
+```
+
+### Manual install (no installer)
+
+```bash
+git clone https://github.com/Mehrvarz24/nano.git
+cd nano/nanohermes
+python3 -m venv .venv
+.venv/bin/pip install aiohttp pyyaml prompt_toolkit rich
+.venv/bin/python nano          # start the CLI
 ```
 
 ---
 
-## استفاده
+## Usage
 
 ```bash
 nano
 ```
 
-### دستورها
+### Slash commands
 
-| دستور | کار |
+| Command | Description |
 |---|---|
-| `/model [prov/model]` | تغییر مدل — بدون آرگومان = منوی تعاملی |
-| `/models` | لیست پروایدرها و مدل‌ها |
-| `/provider` | **افزودن پروایدر** (نام، URL، کلید، مدل‌ها) |
-| `/new` | گفتگوی جدید |
-| `/reasoning` | روشن/خاموش استدلال عمیق |
-| `/tools` | روشن/خاموش ابزارها |
-| `/stop` | توقف اجرا (یا `Ctrl+C`) |
-| `/status` | وضعیت سرور (RAM، دیسک، load) |
-| `/sys <متن>` | تغییر شخصیت ایجنت |
-| `/skills` | مهارت‌های آموخته‌شده |
-| `/skill <نام>` | نمایش کامل یک مهارت |
-| `/learn [نام]` | ذخیرهٔ آخرین راه‌حل به‌عنوان مهارت |
-| `/forget <نام>` | حذف مهارت |
-| `/history` | تاریخچهٔ گفتگو |
-| `/save` `/load` | ذخیره/بارگذاری نشست |
-| `/exit` | خروج |
+| `/model [provider/model]` | switch model — with no argument, opens an interactive picker |
+| `/models` | list all providers and models |
+| `/provider` | **add a provider** (name, base URL, key, models) |
+| `/new` | start a new conversation |
+| `/reasoning` | toggle deep reasoning |
+| `/tools` | toggle tools on/off |
+| `/stop` | stop the current run (or press `Ctrl+C`) |
+| `/status` | server status (RAM, disk, load average) |
+| `/sys <text>` | change the agent persona |
+| `/skills` | list learned skills |
+| `/skill <name>` | show a full skill |
+| `/learn [name]` | save the last solution as a skill |
+| `/forget <name>` | delete a skill |
+| `/history` | show this conversation |
+| `/save` `/load` | save / load a session |
+| `/exit` | quit |
 
-**کلیدها:** `Tab` تکمیل خودکار · `↑↓` تاریخچه · `Ctrl+C` توقف
+**Keys:** `Tab` autocomplete · `Up/Down` history · `Ctrl+C` interrupt
 
 ---
 
-## ابزارها
+## Tools
 
-| ابزار | کار |
+| Tool | Description |
 |---|---|
-| `run_bash` | اجرای دستور شل (گارد دستورهای نابودگر) |
-| `web_search` | سرچ چندلایه: **deepseek-search** (با استناد) → Jina → DDG → Wikipedia |
-| `read_url` | خواندن متن تمیز صفحه (Jina Reader) |
-| `manage_file` | خواندن/نوشتن فایل |
-| `skill_list` | فهرست مهارت‌ها |
-| `skill_view` | خواندن یک مهارت |
-| `skill_manage` | ساخت/به‌روزرسانی مهارت |
+| `run_bash` | execute shell commands (destructive commands are guarded) |
+| `web_search` | layered search: **deepseek-search** (cited) → Jina → DDG → Wikipedia |
+| `read_url` | read the clean text of a page (Jina Reader) |
+| `manage_file` | read / write files on the server |
+| `skill_list` | list learned skills |
+| `skill_view` | read one skill |
+| `skill_manage` | create / update skills |
 
 ---
 
-## 🧠 ذهن خودرشد (مهارت‌ها)
+## 🧠 Self-growing skills
 
-الگو از [Hermes Agent](https://github.com/NousResearch/hermes-agent) گرفته شده، ولی سبک‌تر
-(بدون embedding — تطبیق کلیدواژه‌ای):
+The pattern comes from [Hermes Agent](https://github.com/NousResearch/hermes-agent),
+but lighter (keyword matching instead of embeddings):
 
-1. **تزریق خودکار** — قبل از هر پیام، مهارت مرتبط با کلیدواژه پیدا و به context اضافه می‌شود.
-2. **استفاده** — ایجنت با `skill_view` می‌خواند و طبق مراحلش عمل می‌کند.
-3. **یادگیری** — بعد از حل موفق، با `skill_manage` مهارت می‌سازد یا به‌روز می‌کند.
-4. **آمار** — تعداد استفاده ثبت می‌شود تا مهارت‌های مفیدتر اولویت بگیرند.
+1. **Auto-inject** — before each message, the most relevant skill is matched by keyword and added to context.
+2. **Use** — the agent reads it with `skill_view` and follows its steps.
+3. **Learn** — after solving something, it creates or updates a skill with `skill_manage`.
+4. **Stats** — usage counts are tracked so more useful skills rank higher.
 
-### ساختار مهارت
+### Skill layout
 
 ```
 skills/
-└── server-health-check/
-    ├── SKILL.md
-    └── references/          # اختیاری
++-- server-health-check/
+    +-- SKILL.md
+    +-- references/          # optional
 ```
 
 ```markdown
 ---
 name: server-health-check
-description: بررسی سلامت سرور: سرویس‌های فعال و مصرف رم
-keywords: [رم, سرویس, health, سرور]
+description: Check server health: running services and their memory use
+keywords: [ram, service, health, server]
 version: 1
 ---
 
-# بررسی سلامت سرور
+# Server health check
 
-## مراحل
-### ۱) وضعیت کلی
+## Steps
+### 1) Overview
 ```bash
 uptime && free -h
 ```
 
-## نکات
-- `user@1002.service` گمراه‌کننده است...
+## Notes
+- `user@1002.service` is misleading...
 ```
 
-**ایجنت این را خودش می‌نویسد** وقتی از او بخواهی:
+**The agent writes this itself** when you ask it to:
 
 ```
-⚡ nano ❯ این روش رو یاد بگیر
-  ┌ 💾 skill_manage {"action":"create","name":"port-conflict-check",...}
-  └ ✓ 3ms · {"ok": true, "name": "port-conflict-check"}
+nano > learn this approach
+  +- skill_manage {"action":"create","name":"port-conflict-check",...}
+  +- ok 3ms - {"ok": true, "name": "port-conflict-check"}
 ```
 
 ---
 
-## پنل وب
+## Web panel
 
-اگر سرویس را نصب کنی، یک پنل وب سبک هم داری:
+If you install the service, you also get a lightweight web panel:
 
 ```
 http://127.0.0.1:7580
 ```
 
-- چت با همان ایجنت و ابزارها
-- مدیریت پروایدرها
-- مرور مهارت‌ها
-- تاریخچهٔ گفتگوها
+- chat with the same agent and tools
+- manage providers
+- browse skills
+- conversation history
 
 ```bash
 systemctl status nanohermes
@@ -171,38 +184,43 @@ systemctl status nanohermes
 
 ---
 
-## پروایدرها
+## Providers
 
-**خودکار از Hermes:** اگر `~/.hermes/config.yaml` داری، همهٔ پروایدرهایش (به‌همراه مدل‌ها)
-خودکار خوانده می‌شوند. کلیدها از `~/.hermes/.env` برداشته می‌شوند.
+**Automatic from Hermes:** if `~/.hermes/config.yaml` exists, all of its providers
+(with their models) are picked up automatically. Keys are read from `~/.hermes/.env`.
 
-**دستی:** داخل برنامه `/provider` بزن و هر endpoint سازگار OpenAI را اضافه کن
-(OpenRouter، Groq، Together، DeepSeek، Ollama محلی، …).
-
----
-
-## مصرف منابع
-
-| | |
-|---|---|
-| RAM | ~۲۵ MB |
-| CPU | ناچیز (فقط هنگام درخواست) |
-| فایل | ~۹۰ KB کد |
-| وابستگی | `aiohttp`, `pyyaml`, `prompt_toolkit`, `rich` |
-
-بدون Docker، بدون Node، بدون دیتابیس سنگین (SQLite تنها).
+**Manual:** run `/provider` inside the app and add any OpenAI-compatible endpoint
+(OpenRouter, Groq, Together, DeepSeek, a local Ollama, …).
 
 ---
 
-## امنیت
+## Resource usage
 
-- **گارد دستورهای نابودگر:** `rm -rf /`، `mkfs`، `dd if=`، `shutdown` و مشابه رد می‌شوند.
-- **اجرای خودکار:** ایجنت بدون تأیید اجرا می‌کند (مثل Hermes). اگر محیط حساس است، از `/tools` برای خاموش کردن استفاده کن.
-- **توکن‌ها:** هرگز در خروجی چاپ نمی‌شوند (در system prompt تأکید شده).
-- **پنل وب:** روی `127.0.0.1` می‌شنود. برای دسترسی از بیرون از تونل (Cloudflare/SSH) استفاده کن، نه باز کردن پورت.
+Measured on a 2-core / 7.4 GB VM:
+
+| | Nano-Hermes | Hermes Agent |
+|---|---|---|
+| RAM (idle) | **~40 MB** | ~444 MB |
+| RAM (with all plugins) | — | ~679 MB |
+| Peak RAM while running a tool | ~42 MB | — |
+| Dependencies | 4 Python packages | Python + Node + plugins |
+| Startup | ~0.3 s | daemon |
+
+No Docker, no Node, no heavy database (SQLite only).
 
 ---
 
-## لایسنس
+## Security
+
+- **Destructive command guard:** `rm -rf /`, `mkfs`, `dd if=`, `shutdown` and similar are refused.
+- **Auto-execution:** the agent runs commands without confirmation (like Hermes).
+  On sensitive machines, turn tools off with `/tools`.
+- **Secrets:** never printed to output (enforced in the system prompt).
+- **Web panel:** listens on `127.0.0.1`. For remote access use a tunnel
+  (Cloudflare Tunnel / SSH) instead of exposing the port.
+
+---
+
+## License
 
 MIT

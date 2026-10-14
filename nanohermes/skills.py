@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nano-Hermes Skills — سیستم مهارت خودرشد
+Nano-Hermes Skills - the self-growing skill system
 
-الگوی هرمس:
-  • مهارت = یک پوشه با SKILL.md (frontmatter YAML + markdown)
-  • خودِ ایجنت می‌تواند مهارت بسازد/ویرایش کند (skill_manage)
-  • مهارت مرتبط به‌صورت خودکار در context بارگذاری می‌شود
+Hermes pattern:
+  - a skill = a folder with SKILL.md (YAML frontmatter + markdown)
+  - the agent itself can create/edit skills (skill_manage)
+  - the relevant skill is loaded into context automatically
 
-تفاوت‌های nano (سبک‌سازی):
-  • بدون embedding — تطبیق با کلیدواژه (keywords در frontmatter)
-  • بدون curator/judge — خود ایجنت تصمیم می‌گیرد
-  • SQLite برای آمار استفاده؛ فایل فقط برای محتوا
+Nano differences (lighter):
+  - no embeddings - keyword matching (keywords in frontmatter)
+  - no curator/judge - the agent decides on its own
+  - SQLite for usage stats; files only for content
 """
 from __future__ import annotations
 import json, os, re, sqlite3, time
@@ -28,7 +28,7 @@ FM_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.S)
 
 # ═══════════════ frontmatter ═══════════════
 def _parse_fm(text: str):
-    """YAML سبک بدون وابستگی (کلید: مقدار + لیست‌های [a, b])."""
+    """Lightweight dependency-free YAML (key: value plus [a, b] lists)."""
     m = FM_RE.match(text or "")
     if not m:
         return {}, (text or "")
@@ -90,9 +90,9 @@ def init_skill_db():
     c.commit(); c.close()
 
 
-# ═══════════════ API اصلی ═══════════════
+# ==================== main API ====================
 def list_skills() -> list[dict]:
-    """همهٔ مهارت‌ها + آمار استفاده."""
+    """All skills plus usage stats."""
     stats = {}
     try:
         c = _db()
@@ -127,22 +127,22 @@ def list_skills() -> list[dict]:
 
 
 def read_skill(name: str, file_path: str | None = None) -> dict:
-    """خواندن یک مهارت (کل SKILL.md یا فایل پیوست)."""
+    """Read a skill (whole SKILL.md or an attachment)."""
     if not NAME_RE.match(name or ""):
-        return {"error": f"نام نامعتبر: {name}"}
+        return {"error": f"invalid name: {name}"}
     base = (SKILLS_DIR / name).resolve()
     if not str(base).startswith(str(SKILLS_DIR.resolve())) or not base.is_dir():
-        return {"error": f"مهارت «{name}» نیست."}
+        return {"error": f"skill not found: {name}"}
 
     target = base / "SKILL.md"
     if file_path:
-        # فقط داخل پوشهٔ مهارت
+        # only inside the skill folder
         t = (base / file_path).resolve()
         if not str(t).startswith(str(base)):
-            return {"error": "مسیر خارج از مهارت."}
+            return {"error": "path escapes the skill folder."}
         target = t
     if not target.exists():
-        return {"error": f"فایل نیست: {file_path or 'SKILL.md'}"}
+        return {"error": f"file not found: {file_path or 'SKILL.md'}"}
 
     text = target.read_text(errors="replace")
     _touch(name)
@@ -154,15 +154,15 @@ def read_skill(name: str, file_path: str | None = None) -> dict:
 
 def create_skill(name: str, description: str, body: str,
                  keywords: list | None = None) -> dict:
-    """ساخت مهارت جدید."""
+    """Create a new skill."""
     name = (name or "").strip().lower().replace(" ", "-")
     if not NAME_RE.match(name):
-        return {"error": "نام باید حروف کوچک/عدد/خط‌تیره باشد (۲–۶۴)."}
+        return {"error": "name must be lowercase letters/digits/hyphens (2-64 chars)."}
     d = SKILLS_DIR / name
     if (d / "SKILL.md").exists():
-        return {"error": f"مهارت «{name}» از قبل هست — از skill_update استفاده کن."}
+        return {"error": f"skill already exists: {name} - use skill_update instead."}
     if not description or not body:
-        return {"error": "توضیح و بدنه لازم است."}
+        return {"error": "description and body are required."}
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(_dump_frontmatter(name, description, keywords or [], body))
     _register(name, created=True)
@@ -171,12 +171,12 @@ def create_skill(name: str, description: str, body: str,
 
 def update_skill(name: str, body: str | None = None, description: str | None = None,
                  keywords: list | None = None, append: str | None = None) -> dict:
-    """به‌روزرسانی مهارت موجود."""
+    """Update an existing skill."""
     if not NAME_RE.match(name or ""):
-        return {"error": "نام نامعتبر."}
+        return {"error": "invalid name."}
     f = SKILLS_DIR / name / "SKILL.md"
     if not f.exists():
-        return {"error": f"مهارت «{name}» نیست."}
+        return {"error": f"skill not found: {name}"}
     meta, old = _parse_fm(f.read_text(errors="replace"))
     new_body = body if body is not None else old
     if append:
@@ -193,35 +193,35 @@ def update_skill(name: str, body: str | None = None, description: str | None = N
 def delete_skill(name: str) -> dict:
     import shutil
     if not NAME_RE.match(name or ""):
-        return {"error": "نام نامعتبر."}
+        return {"error": "invalid name."}
     d = SKILLS_DIR / name
     if not (d / "SKILL.md").exists():
-        return {"error": f"مهارت «{name}» نیست."}
+        return {"error": f"skill not found: {name}"}
     shutil.rmtree(d)
     c = _db(); c.execute("DELETE FROM skill_stats WHERE name=?", (name,)); c.commit(); c.close()
     return {"ok": True, "deleted": name}
 
 
 def add_file(name: str, file_path: str, content: str) -> dict:
-    """افزودن فایل پیوست (references/, scripts/, …)."""
+    """Add an attachment file (references/, scripts/, ...)."""
     if not NAME_RE.match(name or ""):
-        return {"error": "نام نامعتبر."}
+        return {"error": "invalid name."}
     base = SKILLS_DIR / name
     if not (base / "SKILL.md").exists():
-        return {"error": f"مهارت «{name}» نیست."}
+        return {"error": f"skill not found: {name}"}
     rel = (file_path or "").lstrip("/")
     if not rel.startswith(("references/", "scripts/", "templates/", "assets/")):
-        return {"error": "مسیر باید با references/ یا scripts/ یا templates/ یا assets/ شروع شود."}
+        return {"error": "path must start with references/, scripts/, templates/ or assets/."}
     t = (base / rel).resolve()
     if not str(t).startswith(str(base)):
-        return {"error": "مسیر نامعتبر."}
+        return {"error": "invalid path."}
     t.parent.mkdir(parents=True, exist_ok=True)
     t.write_text(content or "")
     return {"ok": True, "path": str(t.relative_to(base))}
 
 
 def search_skills(query: str, limit: int = 4, min_score: int = 1) -> list[dict]:
-    """تطبیق ساده با کلیدواژه + متن توضیح/بدنه (بدون embedding)."""
+    """Simple keyword matching over description/body text (no embeddings)."""
     q = (query or "").lower()
     words = [w for w in re.findall(r"[\w\u0600-\u06FF]{3,}", q)]
     if not words:
@@ -252,7 +252,7 @@ def search_skills(query: str, limit: int = 4, min_score: int = 1) -> list[dict]:
 
 
 def build_context(query: str, max_chars: int = 3000, top: int = 2) -> str:
-    """متن مهارت‌های مرتبط برای تزریق در system prompt."""
+    """Text of relevant skills, to inject into the system prompt."""
     hits = search_skills(query, limit=top)
     if not hits:
         return ""
@@ -269,15 +269,15 @@ def build_context(query: str, max_chars: int = 3000, top: int = 2) -> str:
         _mark_used(h["name"])
     if not parts:
         return ""
-    return ("\n\n## مهارت‌های مرتبط (آموخته‌های قبلی)\n"
-            "این‌ها را به‌عنوان راهنمای کارت استفاده کن و اگر چیز جدیدی یاد گرفتی، "
-            "با skill_manage به‌روزرسانی کن.\n\n" + "\n\n".join(parts))
+    return ("\n\n## Relevant skills (previously learned)\n"
+            "Use these as guidance for your task; if you learn something new, "
+            "update them with skill_manage.\n\n" + "\n\n".join(parts))
 
 
 def learn_from_task(task: str, solution: str, name: str,
                     description: str, keywords: list | None = None,
                     append_to: str | None = None) -> dict:
-    """یادگیری خودکار: مهارت بساز یا به موجود اضافه کن."""
+    """Automatic learning: create a skill or append to an existing one."""
     if append_to:
         r = update_skill(append_to, append=f"## {task[:80]}\n{solution}")
         if r.get("ok"):

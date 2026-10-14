@@ -1,20 +1,20 @@
-# محیط و کش
+# Environment and caches
 .venv/
 __pycache__/
 *.pyc
 .cache/
 
-# داده و رمز
+# Data and secrets
 nano_hermes.db
 config.json
 *.log
 
-# مهارت‌های کاربر
+# User skills
 skills/*/
 !skills/.gitkeep
 !skills/README.md
 
-# ادیتور
+# Editors
 .vscode/
 .idea/
 *.swp

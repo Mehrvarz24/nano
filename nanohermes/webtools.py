@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""ابزارهای وب مشترک — سرچ چندلایه + خواندن صفحه."""
+"""Shared web tools - layered search plus page reading."""
 import os, re, html as _h
 from pathlib import Path
 from aiohttp import ClientSession
@@ -23,7 +23,7 @@ def _env(key: str) -> str:
 
 
 async def search_deepseek(query: str, n: int = 5) -> str:
-    """🔍 سرچ واقعی با استناد (deepseek-search روی dsatlas)."""
+    """Search with citations via deepseek-search (on dsatlas)."""
     key = _env("DS_API_KEY")
     if not key:
         return ""
@@ -32,7 +32,7 @@ async def search_deepseek(query: str, n: int = 5) -> str:
             async with s.post("https://ds.miors.art/v1/chat/completions",
                               json={"model": "deepseek-search", "stream": False,
                                     "messages": [{"role": "user", "content":
-                                    f"{query}\n\n(حداکثر {n} نتیجهٔ کلیدی با لینک بده)"}]},
+                                    f"{query}\n\n(give up to {n} key results with links)"}]},
                               headers={"Authorization": f"Bearer {key}"},
                               timeout=75) as r:
                 if r.status != 200:
@@ -105,10 +105,10 @@ async def search_wikipedia(query: str, n: int = 5) -> str:
 
 
 async def web_search(query: str, max_results: int = 5) -> str:
-    """سرچ چندلایه با fallback خودکار."""
+    """Layered web search with automatic fallback."""
     q = (query or "").strip()
     if not q:
-        return "کوئری خالی است."
+        return "empty query."
     n = int(max_results or 5)
     for fn, label in ((search_deepseek, "DeepSeek-Search"),
                       (search_jina, "Jina"),
@@ -119,14 +119,14 @@ async def web_search(query: str, max_results: int = 5) -> str:
         except Exception:
             continue
         if out:
-            return f"🔍 **{q}**\n\n{out}\n\n«منبع: {label}»"
-    return "❌ هیچ موتور جست‌وجویی نتیجه نداد."
+            return f"🔍 **{q}**\n\n{out}\n\n[source: {label}]"
+    return "no search engine returned results."
 
 
 async def read_url(url: str) -> str:
-    """خواندن متن تمیز صفحه (Jina → fallback)."""
+    """Read a page as clean text (Jina, then fallback)."""
     if not url.startswith(("http://", "https://")):
-        return "URL نامعتبر."
+        return "invalid URL."
     key = _env("JINA_API_KEY")
     try:
         hdrs = {"User-Agent": "Nano-Hermes/1.0"}
@@ -148,4 +148,4 @@ async def read_url(url: str) -> str:
             t = _h.unescape(re.sub(r"<[^>]+>", " ", h))
             return re.sub(r"\s+\n", "\n", re.sub(r"[ \t]+", " ", t)).strip()[:MAX_OUTPUT]
     except Exception as e:
-        return f"خطای خواندن: {e}"
+        return f"read error: {e}"

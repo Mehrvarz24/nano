@@ -1,7 +1,7 @@
 [project]
 name = "nanohermes"
 version = "1.0.0"
-description = "دستیار ترمینالی سبک با دسترسی سرور، وب‌سرچ و مهارت‌های خودرشد"
+description = "A lightweight terminal assistant with full server access, live web search, and self-growing skills"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -18,4 +18,3 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = ["skills", "webtools"]
-scripts = { nano = "nanohermes_cli:main" }
