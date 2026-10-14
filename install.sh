@@ -3,10 +3,10 @@
 #  ⚡ Nano-Hermes — نصب‌کنندهٔ یک‌خطی
 #
 #  استفاده:
-#    curl -fsSL https://raw.githubusercontent.com/USER/nanohermes/main/install.sh | bash
+#    curl -fsSL https://raw.githubusercontent.com/Mehrvarz24/nano/main/install.sh | bash
 #
 #  یا با مخزن دلخواه:
-#    NANO_REPO=https://github.com/USER/nanohermes.git bash install.sh
+#    NANO_REPO=https://github.com/Mehrvarz24/nano.git bash install.sh
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -27,7 +27,7 @@ step() { printf "\n${CY}${B}▸ %s${R}\n" "$1"; }
 
 APP="nanohermes"
 DIR="${NANO_DIR:-$HOME/.nanohermes}"
-REPO="${NANO_REPO:-https://github.com/amir/nanohermes.git}"
+REPO="${NANO_REPO:-https://github.com/Mehrvarz24/nano.git}"
 BRANCH="${NANO_BRANCH:-main}"
 PORT="${NANO_PORT:-7580}"
 

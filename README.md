@@ -32,7 +32,7 @@
 ## نصب
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/USER/nanohermes/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Mehrvarz24/nano/main/install.sh | bash
 ```
 
 اسکریپت خودش: Python را چک می‌کند → محیط مجازی می‌سازد → پکیج‌ها را نصب می‌کند →
@@ -51,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/USER/nanohermes/main/install.sh | b
 ### نصب محلی (از سورس)
 
 ```bash
-git clone https://github.com/USER/nanohermes.git
+git clone https://github.com/Mehrvarz24/nano.git
 cd nanohermes
 bash install.sh
 ```
